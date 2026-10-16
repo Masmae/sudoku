@@ -1,5 +1,5 @@
 import { parsePuzzle, PEERS, UNITS, UNITS_OF, bit, getHint, candidateState, SolveState, nextStep, T,
-  compile, VariantState, variantCandidates, variantHint, variantSingleStep } from "../core/index.js";
+  compile, VariantState, variantCandidates, variantHint, variantSingleStep, ck, pairOk, groupOk, has } from "../core/index.js";
 
 /** Autocomplete is offered only near the end, so it never solves most of a puzzle for you. */
 export const AUTOCOMPLETE_MAX_EMPTY = 9;
@@ -70,6 +70,42 @@ export class Game {
     if (f.rules?.antiKnight) mark([[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]], "knight");
     if (f.rules?.antiKing) mark([[-1, -1], [-1, 1], [1, -1], [1, 1]], "knight");
     return out;
+  }
+
+  /**
+   * Pencil marks that break a rule given the digits already placed: the digit is in a
+   * peer cell, or (variants) it breaks shading, a pair clue or a group clue outright.
+   * Returns a Set of ck(cell, digit).
+   */
+  noteConflicts() {
+    const out = new Set();
+    const v = this.values;
+    for (let c = 0; c < 81; c++) {
+      if (v[c] || !this.notes[c]) continue;
+      for (let d = 1; d <= 9; d++) {
+        if (!has(this.notes[c], d)) continue;
+        if (this.isNoteBlocked(c, d)) out.add(ck(c, d));
+      }
+    }
+    return out;
+  }
+
+  isNoteBlocked(c, d) {
+    const v = this.values;
+    for (const p of this.peersOf(c)) if (v[p] === d) return true;
+    const cm = this.cm;
+    if (!cm) return false;
+    if (!(cm.cellMask[c] & bit(d))) return true;
+    for (const p of cm.pairsOf[c]) {
+      const other = p.a === c ? p.b : p.a;
+      if (!v[other]) continue;
+      if (!(p.a === c ? pairOk(p, d, v[other]) : pairOk(p, v[other], d))) return true;
+    }
+    for (const g of cm.groupsOf[c]) {
+      const vals = g.cells.map((x) => (x === c ? d : v[x]));
+      if (!groupOk(g, vals)) return true;
+    }
+    return false;
   }
 
   /** Every cell that can't share a digit with `c` (variant rules included). */

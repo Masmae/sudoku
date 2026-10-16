@@ -111,7 +111,9 @@ export class BoardView {
           const struck = hl.elims.has(k) || role === "marked" || role === "wrongmark";
           let cls = role === "key" ? "key" : role === "sec" ? "sec" : role === "place" ? "place" : "";
           if (struck) cls += " struck";
+          if (!cls && m.noteConflicts?.has(k)) cls = "conflict";
           if (!cls && m.highlightDigit === d) cls = "focus";
+          else if (cls === "conflict" && m.highlightDigit === d) cls = "conflict focus";
           grid.append(h("span", { class: cls.trim() || null }, String(d)));
         }
         el.append(grid);

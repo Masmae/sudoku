@@ -12,7 +12,7 @@ import {
 } from "../core/index.js";
 
 // ---------------- App state ----------------
-const DEFAULT_SETTINGS = { showMistakes: true, autoRemoveNotes: true, showRemaining: true, autocomplete: true, theme: "system" };
+const DEFAULT_SETTINGS = { showMistakes: true, autoRemoveNotes: true, showRemaining: true, autocomplete: true, noteWarnings: true, theme: "system" };
 const app = {
   lib: new Library(),
   settings: { ...DEFAULT_SETTINGS, ...store.load("settings", {}) },
@@ -225,7 +225,8 @@ function viewGame() {
     pauseBtn.setAttribute("aria-label", g.paused ? "Resume" : "Pause");
     board.setVariant(g.puzzle.kind === "variant" ? g.puzzle.features : null);
     board.render({ values: g.values, given: (c) => g.isGiven(c), notes, wrong, selected: g.selected, highlightDigit: g.highlightDigit,
-      digitMode: g.lockMode && !!g.lockedDigit, extra: g.variantFocus(), hl, shake: g.shake, pulse: g.pulse });
+      digitMode: g.lockMode && !!g.lockedDigit, extra: g.variantFocus(), hl, shake: g.shake, pulse: g.pulse,
+      noteConflicts: app.settings.noteWarnings && notes === g.notes ? g.noteConflicts() : null });
     g.shake = null; g.pulse = null;
     mistakesEl.replaceChildren(app.settings.showMistakes ? `Mistakes: ${g.mistakes}` : "");
     mistakesEl.className = "stat" + (g.mistakes ? " bad" : "");
@@ -745,6 +746,7 @@ function viewSettings() {
     h("div", { class: "section" }, h("h2", {}, "Playing"), h("div", { class: "list" },
       toggle("showMistakes", "Show mistakes"),
       toggle("autoRemoveNotes", "Remove notes when placing a digit"),
+      toggle("noteWarnings", "Show notes that break a rule in orange"),
       toggle("showRemaining", "Show digits remaining on keypad"),
       toggle("autocomplete", `Offer autocomplete when only singles remain (≤ ${AUTOCOMPLETE_MAX_EMPTY} cells)`),
       h("label", { class: "toggle-row" }, h("span", {}, "Appearance"), themeSel))),
