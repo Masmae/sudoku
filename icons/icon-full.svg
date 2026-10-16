@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#2f62d6"/>
+  <g fill="none" stroke="#ffffff" stroke-linecap="round">
+    <rect x="232" y="232" width="560" height="560" rx="36" stroke-width="34"/>
+    <path d="M418.7 232v560M605.3 232v560M232 418.7h560M232 605.3h560" stroke-width="20" opacity=".9"/>
+  </g>
+  <rect x="436" y="436" width="152" height="152" rx="18" fill="#8db0f2"/>
+  <text x="512" y="560" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="128" font-weight="300" fill="#1c2740" text-anchor="middle">5</text>
+</svg>

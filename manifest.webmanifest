@@ -1,0 +1,16 @@
+{
+  "name": "Sudoku Trainer",
+  "short_name": "Sudoku",
+  "description": "Learn advanced Sudoku techniques with hints, drills and step-by-step solutions.",
+  "start_url": "./#/play",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f3f5fa",
+  "theme_color": "#f3f5fa",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
