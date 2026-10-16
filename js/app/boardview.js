@@ -1,6 +1,7 @@
 // Board rendering. Gliding selection frame, unit pulse and conflict shake are
 // adapted from SudoSodoku (MIT, © 2026 Kai T. Chen).
 import { h, svg } from "./dom.js";
+import { drawVariant, variantDefs } from "./variantlayer.js";
 import { UNITS, sees, has, ck, ROW, COL, BOX } from "../core/index.js";
 
 /** What to draw for a hint step. level 2 = pattern, 3 = pattern + result. */
@@ -9,6 +10,8 @@ export function highlightsFor(step, level) {
   if (!step || level < 2) return hl;
   step.units.forEach((u) => hl.units.add(u));
   step.cells.forEach((c) => hl.cells.add(c));
+  // Variant-rule steps have no row/column/box: shade the rule's own cells instead.
+  if (step.technique === "variantRule") step.cells.forEach((c) => hl.flagged.add(c));
   for (const c of step.keyCandidates) hl.roles.set(ck(c.cell, c.digit), "key");
   for (const c of step.secondaryCandidates) hl.roles.set(ck(c.cell, c.digit), "sec");
   hl.links = step.links;
@@ -42,10 +45,27 @@ export class BoardView {
       lines.append(svg("line", { class: cls, x1: 0, y1: i * 100, x2: 900, y2: i * 100 }));
     }
     this.links = svg("svg", { class: "links", viewBox: "0 0 900 900", preserveAspectRatio: "none", "aria-hidden": "true" });
+    this.variantSvg = svg("svg", { class: "variant-layer", viewBox: "0 0 900 900", preserveAspectRatio: "none", "aria-hidden": "true" });
     this.frame = h("div", { class: "sel-frame", "aria-hidden": "true" });
     this.frame.style.display = "none";
-    this.board.append(lines, this.links, this.frame);
-    this.el = h("div", { class: "board-wrap" }, this.board);
+    this.board.append(this.variantSvg, lines, this.links, this.frame);
+    this.outsideTop = h("div", { class: "outside top", "aria-hidden": "true" });
+    this.outsideLeft = h("div", { class: "outside left", "aria-hidden": "true" });
+    this.el = h("div", { class: "board-wrap" }, this.board, this.outsideTop, this.outsideLeft);
+    this.variantKey = null;
+  }
+
+  /** Draws (once) the clues of a variant puzzle; pass null for classic Sudoku. */
+  setVariant(features) {
+    const key = features ? JSON.stringify(features) : null;
+    if (key === this.variantKey) return;
+    this.variantKey = key;
+    this.variantSvg.replaceChildren(variantDefs(), drawVariant(features));
+    this.board.classList.toggle("killer", !!features?.cages);
+    const sw = features?.sandwich;
+    this.el.classList.toggle("outside-clues", !!sw);
+    this.outsideTop.replaceChildren(...(sw ? sw.cols.map((v) => h("span", {}, v === null ? "" : String(v))) : []));
+    this.outsideLeft.replaceChildren(...(sw ? sw.rows.map((v) => h("span", {}, v === null ? "" : String(v))) : []));
   }
 
   /**
@@ -68,6 +88,7 @@ export class BoardView {
       else if (hl.flagged.has(i)) bg = "hint-cell";
       else if (hd && v === hd) bg = "same";
       else if (i === sel) bg = "selected";
+      else if (m.extra?.has(i)) bg = m.extra.get(i);
       else if (m.digitMode ? doneBoxes.has(BOX[i]) : sel !== null && sees(sel, i)) bg = "related";
       el.className = "cell" + (bg ? " " + bg : "");
       el.replaceChildren();

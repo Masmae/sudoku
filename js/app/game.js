@@ -1,4 +1,5 @@
-import { parsePuzzle, PEERS, UNITS, UNITS_OF, bit, getHint, candidateState, SolveState, nextStep, T } from "../core/index.js";
+import { parsePuzzle, PEERS, UNITS, UNITS_OF, bit, getHint, candidateState, SolveState, nextStep, T,
+  compile, VariantState, variantCandidates, variantHint, variantSingleStep } from "../core/index.js";
 
 /** Autocomplete is offered only near the end, so it never solves most of a puzzle for you. */
 export const AUTOCOMPLETE_MAX_EMPTY = 9;
@@ -7,6 +8,8 @@ export const AUTOCOMPLETE_MAX_EMPTY = 9;
 export class Game {
   constructor(puzzle, saved = null) {
     this.puzzle = puzzle;
+    // Variant puzzles carry their clues; classic ones don't.
+    this.cm = puzzle.kind === "variant" && puzzle.features ? compile(puzzle.features) : null;
     this.givens = parsePuzzle(puzzle.puzzle);
     this.solution = parsePuzzle(puzzle.solution);
     this.values = saved?.values?.slice() ?? this.givens.slice();
@@ -36,6 +39,41 @@ export class Game {
     if (!Array.isArray(j.values) || j.values.length !== 81 || !Array.isArray(j.notes) || j.notes.length !== 81) return null;
     return new Game(j.puzzle, j);
   }
+
+  /** Candidates implied by the board (and the player's notes, if given). */
+  candidateState(withNotes = true) {
+    if (this.cm) return variantCandidates(this.cm, this.values, withNotes ? this.notes : null);
+    return withNotes ? candidateState(this.values, this.notes) : new SolveState(this.values);
+  }
+
+  /**
+   * Variant-specific highlights for the selected cell: its mirror on a palindrome
+   * line, and the cells a knight's / king's move away in Anti-Knight / Anti-King.
+   */
+  variantFocus() {
+    const out = new Map();
+    const c = this.selected, f = this.puzzle.features;
+    if (c === null || !f) return out;
+    for (const line of f.palindromes ?? []) {
+      const i = line.cells.indexOf(c);
+      if (i < 0) continue;
+      const m = line.cells[line.cells.length - 1 - i];
+      if (m !== c) out.set(m, "mirror");
+    }
+    const r = Math.floor(c / 9), k = c % 9;
+    const mark = (offs, cls) => {
+      for (const [dr, dc] of offs) {
+        const rr = r + dr, cc = k + dc;
+        if (rr >= 0 && rr < 9 && cc >= 0 && cc < 9 && !out.has(rr * 9 + cc)) out.set(rr * 9 + cc, cls);
+      }
+    };
+    if (f.rules?.antiKnight) mark([[-2, -1], [-2, 1], [-1, -2], [-1, 2], [1, -2], [1, 2], [2, -1], [2, 1]], "knight");
+    if (f.rules?.antiKing) mark([[-1, -1], [-1, 1], [1, -1], [1, 1]], "knight");
+    return out;
+  }
+
+  /** Every cell that can't share a digit with `c` (variant rules included). */
+  peersOf(c) { return this.cm ? this.cm.peers[c] : PEERS[c]; }
 
   get isSolved() { return this.values.every((v, i) => v === this.solution[i]); }
   isGiven(c) { return this.givens[c] !== 0; }
@@ -98,10 +136,10 @@ export class Game {
     if (this.isSolved || this.values.some((v, c) => v && v !== this.solution[c])) return null;
     const empty = this.values.filter((v) => v === 0).length;
     if (empty === 0 || empty > AUTOCOMPLETE_MAX_EMPTY) return null;
-    const s = new SolveState(this.values);
+    const s = this.cm ? new VariantState(this.cm, this.values) : new SolveState(this.values);
     const order = [];
     while (!s.isSolved) {
-      const st = nextStep(s, T.nakedSingle.rank);
+      const st = this.cm ? variantSingleStep(s) : nextStep(s, T.nakedSingle.rank);
       if (!st) return null;
       for (const p of st.placements) if (!s.values[p.cell]) order.push(p);
       s.apply(st);
@@ -121,7 +159,7 @@ export class Game {
   fillCell(p) {
     this.values[p.cell] = p.digit;
     this.notes[p.cell] = 0;
-    for (const q of PEERS[p.cell]) this.notes[q] &= ~bit(p.digit);
+    for (const q of this.peersOf(p.cell)) this.notes[q] &= ~bit(p.digit);
     this.selected = p.cell;
     this.pulseAround(p.cell);
   }
@@ -147,7 +185,7 @@ export class Game {
       this.notes[c] = 0;
       if (d !== this.solution[c]) { this.mistakes++; this.shake = c; }
       else {
-        if (this.autoRemoveNotes) for (const p of PEERS[c]) this.notes[p] &= ~bit(d);
+        if (this.autoRemoveNotes) for (const p of this.peersOf(c)) this.notes[p] &= ~bit(d);
         this.pulseAround(c);
       }
     }
@@ -180,7 +218,7 @@ export class Game {
 
   fillAllNotes() {
     this.checkpoint();
-    const s = new SolveState(this.values);
+    const s = this.candidateState(false);
     for (let c = 0; c < 81; c++) if (!this.values[c]) this.notes[c] = s.cands[c];
   }
 
@@ -203,7 +241,7 @@ export class Game {
   /** Each request goes one level deeper: 1 technique, 2 where, 3 the move. */
   requestHint() {
     if (!this.hint) {
-      this.hint = getHint(this.values, this.notes, this.solution);
+      this.hint = this.cm ? variantHint(this.cm, this.values, this.notes, this.solution) : getHint(this.values, this.notes, this.solution);
       this.hintLevel = 1;
       this.hintsUsed++;
     } else if (this.hint.kind === "step" && this.hintLevel < 3) this.hintLevel++;
@@ -213,7 +251,7 @@ export class Game {
   applyHint() {
     if (this.hint?.kind !== "step") return;
     const st = this.hint.step;
-    const state = candidateState(this.values, this.notes);
+    const state = this.candidateState();
     this.checkpoint();
     for (const e of st.eliminations) {
       if (this.values[e.cell]) continue;
@@ -222,7 +260,7 @@ export class Game {
     }
     for (const p of st.placements) {
       this.values[p.cell] = p.digit; this.notes[p.cell] = 0;
-      if (this.autoRemoveNotes) for (const q of PEERS[p.cell]) this.notes[q] &= ~bit(p.digit);
+      if (this.autoRemoveNotes) for (const q of this.peersOf(p.cell)) this.notes[q] &= ~bit(p.digit);
       this.selected = p.cell;
       this.pulseAround(p.cell);
     }
@@ -234,7 +272,7 @@ export class Game {
     else if (h.kind === "badNotes") {
       const cells = h.cells;
       this.checkpoint();
-      const s = new SolveState(this.values);
+      const s = this.candidateState(false);
       for (const c of cells) this.notes[c] = s.cands[c];
     }
   }

@@ -1,5 +1,5 @@
 // Heavy work (generation, grading, drill search) runs here so the UI stays smooth.
-import { generate, gradePuzzle, findDrills, isValidDrill, randomPuzzle, puzzleString, T } from "../core/index.js";
+import { generate, gradePuzzle, findDrills, isValidDrill, randomPuzzle, puzzleString, T, generateVariant, verifyVariant } from "../core/index.js";
 
 self.onmessage = (e) => {
   const { id, type, args } = e.data;
@@ -8,6 +8,8 @@ self.onmessage = (e) => {
     switch (type) {
       case "generate": result = generate(args.difficulty); break;
       case "grade": result = gradePuzzle(args.puzzle); break;
+      case "generateVariant": result = generateVariant(args.variant, args.level, Math.random, args.level === 3 ? 12000 : 6000); break;
+      case "verifyVariant": result = verifyVariant(args.puzzle); break;
       case "validateDrills": result = args.drills.filter(isValidDrill); break;
       case "findDrills": result = findDrills(args.technique, args.count); break;
       case "practice": {

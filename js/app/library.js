@@ -60,6 +60,9 @@ export class Library {
   }
 
   /** A full puzzle whose hardest step is `t`, shown in a fresh disguise (same logic, new look). */
+  /** A freshly generated variant puzzle (unique, and solvable by the hint engine). */
+  nextVariant(variant, level) { return this.run("generateVariant", { variant, level }); }
+
   async practicePuzzle(t) {
     const pool = [...this.bankPractice, ...this.bundled];
     const exact = pool.filter((p) => p.hardest === t);

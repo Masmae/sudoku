@@ -7,7 +7,8 @@ import { CONTENT } from "./content.js";
 import {
   TECHNIQUES, T, DIFFICULTIES, difficultyTitle, placesDigits, nudge, resultText, cellName, cellNames,
   candidateState, drillState, firstStep, judgeDrill, ck, has, parsePuzzle, hasNoConflicts, bruteSolve, SolveState, nextStep,
-  puzzleString, logicalSolve, gradePuzzle,
+  puzzleString, logicalSolve, gradePuzzle, VARIANTS, VARIANT, VariantState, variantNextStep,
+  canCombine, comboKey, comboName, GOOD_COMBOS,
 } from "../core/index.js";
 
 // ---------------- App state ----------------
@@ -41,6 +42,28 @@ const timeString = (t) => {
 };
 const dots = (n) => h("span", { class: "dots", "aria-label": `${n} of 3 drills correct` }, [0, 1, 2].map((i) => h("i", { class: i < n ? "on" : "" })));
 
+/** "Killer · Medium" for variants, "Hard" for classic. */
+const variantIds = (p) => p.variants ?? [p.variant];
+const puzzleTitle = (p) => (p.kind === "variant" ? `${comboName(variantIds(p))} · ${difficultyTitle(p.difficulty)}` : difficultyTitle(p.difficulty));
+
+/** Rules dialog for one variant or a mix (accepts an id, a list of ids, or a puzzle). */
+/** Tell the player when the generator couldn't hit the requested level in time. */
+function levelNotice(p, asked) {
+  if (p.difficulty !== asked) toast(`No ${difficultyTitle(asked)} puzzle turned up quickly for this mix — this one is ${difficultyTitle(p.difficulty)}.`, 4500);
+}
+
+function showRules(what) {
+  const ids = typeof what === "string" ? [what] : Array.isArray(what) ? what : variantIds(what);
+  const vs = ids.map((id) => VARIANT[id]);
+  const extra = (v) => v.rules.replace(/^Normal Sudoku rules\. /, "");
+  const body = vs.length === 1 ? h("p", {}, vs[0].rules)
+    : h("div", {}, h("p", {}, "Normal Sudoku rules, plus all of these:"), h("ul", { class: "rules-list" }, vs.map((v) => h("li", {}, h("b", {}, v.name + ": "), extra(v)))));
+  const dlg = h("dialog", {}, h("h2", {}, `${comboName(ids)} rules`), body,
+    h("div", { class: "btn-row" }, h("span", { class: "spacer" }), h("button", { class: "btn primary", onclick: () => dlg.close() }, "Got it")));
+  dlg.addEventListener("close", () => dlg.remove());
+  document.body.append(dlg); dlg.showModal();
+}
+
 function startGame(p) {
   app.lib.markPlayed(p);
   app.game = new Game(p);
@@ -55,7 +78,7 @@ function route() {
   const [, page, arg] = (location.hash || "#/play").split("/");
   document.querySelectorAll(".tabbar a").forEach((a) => {
     const tab = a.dataset.tab;
-    const active = tab === page || (tab === "play" && (page === "game" || page === "path")) || (tab === "learn" && page === "drill");
+    const active = tab === page || (tab === "play" && (page === "game" || page === "path" || page === "variants")) || (tab === "learn" && page === "drill");
     active ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current");
   });
   window.scrollTo(0, 0);
@@ -64,6 +87,7 @@ function route() {
     case "learn": return arg && T[arg] ? viewTechnique(arg) : viewLearn();
     case "drill": return T[arg] ? viewDrill(arg) : (location.hash = "#/learn");
     case "settings": return viewSettings();
+    case "variants": return viewVariants();
     case "path": return app.game ? viewPath(arg === "start" ? "start" : "current") : (location.hash = "#/play");
     default: return viewPlay();
   }
@@ -93,9 +117,14 @@ function viewPlay() {
     h("div", { class: "page-title" }, h("h1", {}, "Sudoku")),
     g && !g.isSolved ? h("div", { class: "section" }, h("div", { class: "list" },
       h("a", { class: "row", href: "#/game" },
-        h("div", { class: "grow" }, h("div", { class: "title" }, "Continue"), h("div", { class: "sub" }, `${difficultyTitle(g.puzzle.difficulty)} · ${timeString(g.elapsed)}`)),
+        h("div", { class: "grow" }, h("div", { class: "title" }, "Continue"), h("div", { class: "sub" }, `${puzzleTitle(g.puzzle)} · ${timeString(g.elapsed)}`)),
         h("span", { class: "chev" }, icon("chevron"))))) : null,
     h("div", { class: "section" }, h("h2", {}, "New game"), h("div", { class: "list" }, levels)),
+    h("div", { class: "section" }, h("h2", {}, "Variants"), h("div", { class: "list" },
+      h("a", { class: "row", href: "#/variants" },
+        h("div", { class: "grow" }, h("div", { class: "title" }, `${VARIANTS.length} Sudoku variants`),
+          h("div", { class: "sub" }, VARIANTS.slice(0, 6).map((v) => v.name).join(", ") + "…")),
+        h("span", { class: "chev" }, icon("chevron"))))),
     h("div", { class: "section" }, h("div", { class: "list" },
       h("button", { class: "row", onclick: openImport }, h("div", { class: "grow title" }, "Import a puzzle"), h("span", { class: "chev" }, icon("chevron")))),
       h("p", { class: "footnote" }, "Paste an 81-character puzzle from a book or website. It's checked before you play it.")),
@@ -150,8 +179,10 @@ function viewGame() {
   mount(h("div", { class: "game" },
     h("div", { class: "board-col" },
       h("div", { class: "game-top" }, h("a", { class: "icon-btn", href: "#/play", "aria-label": "Back" }, icon("back")),
-        h("span", { class: "grow" }), hintsEl, menuBtn),
-      h("div", { class: "game-status" }, mistakesEl, h("span", { class: "level" }, difficultyTitle(g.puzzle.difficulty)),
+        h("span", { class: "grow" }), hintsEl,
+        g.cm ? h("button", { class: "menu-btn rules-btn", "aria-label": "Rules", onclick: () => showRules(g.puzzle) }, "Rules") : null,
+        menuBtn),
+      h("div", { class: "game-status" }, mistakesEl, h("span", { class: "level" }, puzzleTitle(g.puzzle)),
         h("span", { class: "timer" }, timeEl, pauseBtn)),
       h("div", { class: "board-holder" }, board.el, resumeBtn)),
     side));
@@ -184,7 +215,7 @@ function viewGame() {
     let notes = g.notes, hl = emptyHighlights();
     if (g.hint?.kind === "step") {
       hl = highlightsFor(g.hint.step, g.hintLevel);
-      if (g.hintLevel >= 2) notes = candidateState(g.values, g.notes).cands;
+      if (g.hintLevel >= 2) notes = g.candidateState().cands;
     } else if (g.hint?.kind === "mistakes" || g.hint?.kind === "badNotes") {
       hl.flagged = new Set(g.hint.cells);
     }
@@ -192,8 +223,9 @@ function viewGame() {
     resumeBtn.hidden = !g.paused;
     pauseBtn.replaceChildren(icon(g.paused ? "play" : "pause"));
     pauseBtn.setAttribute("aria-label", g.paused ? "Resume" : "Pause");
+    board.setVariant(g.puzzle.kind === "variant" ? g.puzzle.features : null);
     board.render({ values: g.values, given: (c) => g.isGiven(c), notes, wrong, selected: g.selected, highlightDigit: g.highlightDigit,
-      digitMode: g.lockMode && !!g.lockedDigit, hl, shake: g.shake, pulse: g.pulse });
+      digitMode: g.lockMode && !!g.lockedDigit, extra: g.variantFocus(), hl, shake: g.shake, pulse: g.pulse });
     g.shake = null; g.pulse = null;
     mistakesEl.replaceChildren(app.settings.showMistakes ? `Mistakes: ${g.mistakes}` : "");
     mistakesEl.className = "stat" + (g.mistakes ? " bad" : "");
@@ -251,7 +283,8 @@ function viewGame() {
         : g.hintLevel === 2 ? "The pattern is highlighted. Can you see what it eliminates?"
         : `${st.explanation}\n\n${resultText(st)}`;
       actions = [
-        h("a", { class: "btn", href: `#/learn/${st.technique}` }, `Learn ${t.name}`),
+        CONTENT[st.technique] ? h("a", { class: "btn", href: `#/learn/${st.technique}` }, `Learn ${t.name}`)
+          : g.cm ? h("button", { class: "btn", onclick: () => showRules(g.puzzle) }, "Rules") : null,
         h("span", { class: "spacer" }),
         g.hintLevel < 3
           ? h("button", { class: "btn primary", onclick: () => { g.requestHint(); update(); } }, g.hintLevel === 1 ? "Show where" : "Show the move")
@@ -293,13 +326,19 @@ function viewGame() {
 
   function onSolved() {
     const k = g.puzzle.difficulty;
-    app.stats.solved[k] = (app.stats.solved[k] ?? 0) + 1;
-    if (g.hintsUsed === 0) app.stats.best[k] = Math.min(app.stats.best[k] ?? Infinity, g.elapsed);
+    if (g.puzzle.kind === "variant") {
+      app.stats.variants = app.stats.variants ?? {};
+      const key = comboKey(variantIds(g.puzzle));
+      app.stats.variants[key] = (app.stats.variants[key] ?? 0) + 1;
+    } else {
+      app.stats.solved[k] = (app.stats.solved[k] ?? 0) + 1;
+      if (g.hintsUsed === 0) app.stats.best[k] = Math.min(app.stats.best[k] ?? Infinity, g.elapsed);
+    }
     store.save("stats", app.stats);
     store.remove("game");
     const dlg = h("dialog", {}, h("div", { class: "solved" },
       h("div", { class: "big" }, "✓"), h("h2", {}, "Solved!"),
-      h("p", { class: "muted" }, `${difficultyTitle(k)} · ${timeString(g.elapsed)} · ${g.mistakes} mistakes · ${g.hintsUsed} hints`),
+      h("p", { class: "muted" }, `${puzzleTitle(g.puzzle)} · ${timeString(g.elapsed)} · ${g.mistakes} mistakes · ${g.hintsUsed} hints`),
       h("div", { class: "card" }, h("div", { class: "small muted" }, "Techniques this puzzle needed"),
         h("div", {}, g.puzzle.techniques.map((t) => T[t].name).join(" · "))),
       h("div", { class: "btn-row" },
@@ -308,9 +347,9 @@ function viewGame() {
         h("span", { class: "spacer" }),
         h("button", { class: "btn primary", onclick: async () => {
           dlg.close();
-          const p = await app.lib.next(k);
+          const p = g.puzzle.kind === "variant" ? await app.lib.nextVariant(variantIds(g.puzzle), k) : await app.lib.next(k);
           if (p) startGame(p);
-        } }, `New ${difficultyTitle(k)} puzzle`))));
+        } }, `New ${puzzleTitle(g.puzzle)} puzzle`))));
     dlg.addEventListener("close", () => dlg.remove());
     document.body.append(dlg); dlg.showModal();
   }
@@ -360,6 +399,82 @@ function viewGame() {
   update();
 }
 
+// ---------------- Variants ----------------
+const VARIANT_GROUPS = [
+  ["Cages & lines", ["killer", "thermo", "arrow", "germanWhisper", "renban", "palindrome", "sandwich"]],
+  ["Dots & signs", ["kropki", "xv", "greaterThan", "consecutive", "quadruple"]],
+  ["Extra rules", ["diagonal", "windoku", "antiKing", "antiKnight", "nonConsecutive", "evenOdd"]],
+];
+function viewVariants() {
+  const solved = app.stats.variants ?? {};
+  mount(h("a", { class: "back", href: "#/play" }, icon("back"), "Play"),
+    h("div", { class: "page-title" }, h("h1", {}, "Variants")),
+    h("p", { class: "muted", style: { margin: "0 4px 16px" } }, "Classic Sudoku plus extra rules. Every puzzle is generated on this device, has exactly one solution, and can be solved with hints."),
+    mixCard(),
+    VARIANT_GROUPS.map(([title, ids]) => h("div", { class: "section" }, h("h2", {}, title), h("div", { class: "list" },
+      ids.map((id) => VARIANT[id]).map((v) => h("button", { class: "row", onclick: () => chooseVariant(v) },
+        h("div", { class: "grow" }, h("div", { class: "title" }, v.name), h("div", { class: "sub" }, v.rules.replace(/^Normal Sudoku rules\. /, ""))),
+        solved[v.id] ? h("span", { class: "badge" }, `${solved[v.id]} solved`) : null,
+        h("span", { class: "chev" }, icon("chevron"))))))));
+}
+
+/** Pick 2-3 variants to combine. */
+function mixCard() {
+  const chosen = [];
+  const chips = h("div", { class: "mix-chips" });
+  const summary = h("p", { class: "small muted mix-summary" });
+  const status = h("p", { class: "small muted", role: "status" });
+  const levelBtns = [[1, "Easy"], [2, "Medium"], [3, "Hard"]].map(([lvl, title]) =>
+    h("button", { class: "btn" + (lvl === 2 ? " primary" : ""), onclick: () => start(chosen.slice(), lvl, title) }, title));
+  const draw = () => {
+    chips.replaceChildren(...VARIANTS.map((v) => {
+      const on = chosen.includes(v.id);
+      const blocked = !on && (chosen.length >= 3 || !canCombine([...chosen, v.id]));
+      return h("button", { class: "chip" + (on ? " on" : ""), disabled: blocked, "aria-pressed": String(on),
+        onclick: () => { on ? chosen.splice(chosen.indexOf(v.id), 1) : chosen.push(v.id); draw(); } }, v.name);
+    }));
+    summary.textContent = chosen.length >= 2 ? comboName(chosen) : chosen.length === 1 ? `${VARIANT[chosen[0]].name} + … (pick one or two more)` : "Pick 2 or 3 variants to combine.";
+    levelBtns.forEach((b) => (b.disabled = chosen.length < 2));
+  };
+  async function start(ids, lvl, title) {
+    if (ids.length < 2) return;
+    card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    status.replaceChildren(h("span", { class: "spinner" }), ` Making a ${title.toLowerCase()} ${comboName(ids)} puzzle…${lvl === 3 ? " Hard ones can take up to 15 seconds." : ""}`);
+    try {
+      const p = await app.lib.nextVariant(ids, lvl);
+      if (p) { startGame(p); levelNotice(p, lvl); }
+      else { status.textContent = "That mix is too restrictive to build quickly — try another."; draw(); }
+    } catch (err) { status.textContent = "Something went wrong: " + err.message; draw(); }
+  }
+  const card = h("div", { class: "section" }, h("h2", {}, "Mix variants"), h("div", { class: "card mix" },
+    chips, summary,
+    h("div", { class: "btn-row" },
+      h("button", { class: "btn", onclick: () => { const c = GOOD_COMBOS[Math.floor(Math.random() * GOOD_COMBOS.length)]; chosen.splice(0, chosen.length, ...c); draw(); } }, "Surprise me"),
+      h("button", { class: "btn", onclick: () => chosen.length >= 2 && showRules(chosen.slice()) }, "Rules")),
+    h("div", { class: "level-row" }, ...levelBtns),
+    status));
+  draw();
+  return card;
+}
+
+function chooseVariant(v) {
+  const status = h("p", { class: "small muted", role: "status" });
+  const pick = (level, title) => h("button", { class: "btn" + (level === 2 ? " primary" : ""), onclick: async (e) => {
+    dlg.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    status.replaceChildren(h("span", { class: "spinner" }), ` Making a ${title.toLowerCase()} ${v.name} puzzle…${level === 3 ? " Hard ones can take up to 15 seconds." : ""}`);
+    try {
+      const p = await app.lib.nextVariant(v.id, level);
+      dlg.close();
+      if (p) { startGame(p); levelNotice(p, level); } else toast("Couldn't make one — try again.");
+    } catch (err) { status.textContent = "Something went wrong: " + err.message; dlg.querySelectorAll("button").forEach((b) => (b.disabled = false)); }
+  } }, title);
+  const dlg = h("dialog", {}, h("h2", {}, v.name), h("p", {}, v.rules), status,
+    h("div", { class: "btn-row" }, h("button", { class: "btn", onclick: () => dlg.close() }, "Cancel"), h("span", { class: "spacer" }),
+      pick(1, "Easy"), pick(2, "Medium"), pick(3, "Hard")));
+  dlg.addEventListener("close", () => dlg.remove());
+  document.body.append(dlg); dlg.showModal();
+}
+
 // ---------------- Solution path ----------------
 function viewPath(mode) {
   const g = app.game;
@@ -367,9 +482,9 @@ function viewPath(mode) {
   const hadMistakes = mode === "current" && g.values.some((v, c) => v && v !== g.solution[c]);
   // Precompute every position along the human solve path.
   const states = [], steps = [];
-  let s = new SolveState(startValues);
-  for (let k = 0; k < 400 && !s.isSolved; k++) {
-    const st = nextStep(s);
+  let s = g.cm ? new VariantState(g.cm, startValues) : new SolveState(startValues);
+  for (let k = 0; k < 800 && !s.isSolved; k++) {
+    const st = g.cm ? variantNextStep(s) : nextStep(s);
     if (!st) break;
     states.push(s.clone()); steps.push(st);
     s.apply(st);
@@ -377,6 +492,7 @@ function viewPath(mode) {
   const stuck = !s.isSolved;
   let i = 0;
   const board = new BoardView({ onTap: () => {}, label: "Solution path" });
+  board.setVariant(g.puzzle.kind === "variant" ? g.puzzle.features : null);
   const title = h("h1", {});
   const info = h("div", { class: "side" });
   const list = h("div", { class: "path-list", role: "list" });
@@ -421,7 +537,7 @@ function viewPath(mode) {
       h("div", { class: "btn-row" },
         h("button", { class: "btn", disabled: i === 0, onclick: () => { i--; draw(); } }, "← Previous"),
         h("span", { class: "spacer" }),
-        h("a", { class: "btn", href: `#/learn/${st.technique}` }, "Learn"),
+        CONTENT[st.technique] ? h("a", { class: "btn", href: `#/learn/${st.technique}` }, "Learn") : null,
         h("button", { class: "btn", disabled: i === steps.length - 1, onclick: () => { i++; draw(); } }, "Next →"),
         h("button", { class: "btn primary", disabled: nextTechnique() < 0, onclick: () => { i = nextTechnique(); draw(); } }, "Next technique ⇥")),
       i === steps.length - 1 && stuck ? h("p", { class: "small muted" }, "After this step the app's techniques get stuck — the rest needs something more advanced.") : null,
@@ -635,6 +751,7 @@ function viewSettings() {
     h("div", { class: "section" }, h("h2", {}, "Progress"), h("div", { class: "list" },
       DIFFICULTIES.map((d) => h("div", { class: "toggle-row" }, h("span", {}, d.title),
         h("span", { class: "muted" }, `${app.stats.solved[d.id] ?? 0} solved` + (app.stats.best[d.id] ? ` · best ${timeString(app.stats.best[d.id])}` : "")))),
+      h("div", { class: "toggle-row" }, h("span", {}, "Variant puzzles solved"), h("span", { class: "muted" }, String(Object.values(app.stats.variants ?? {}).reduce((a, b) => a + b, 0)))),
       h("div", { class: "toggle-row" }, h("span", {}, "Techniques mastered"), h("span", { class: "muted" }, `${mastered} of ${TECHNIQUES.length}`)))),
     h("div", { class: "section" }, h("h2", {}, "Puzzles"), h("div", { class: "list" },
       h("div", { class: "toggle-row" }, h("span", {}, "Built-in puzzles"), h("span", { class: "muted" }, String(app.lib.bundled.length))),

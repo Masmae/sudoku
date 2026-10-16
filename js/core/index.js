@@ -8,3 +8,5 @@ export * from "./generator.js";
 export * from "./hint.js";
 export * from "./drill.js";
 export * from "./transform.js";
+export * from "./variants.js";
+export * from "./vsolver.js";

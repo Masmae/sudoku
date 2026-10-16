@@ -18,7 +18,11 @@ export const TECHNIQUES = [
   ["jellyfish", "Jellyfish", 4], ["xChain", "X-Chain", 5], ["xyChain", "XY-Chain", 5],
 ].map(([id, name, difficulty], rank) => ({ id, name, difficulty, rank }));
 
-export const T = Object.fromEntries(TECHNIQUES.map((t) => [t.id, t]));
+/** Steps that exist only in variant puzzles (not part of classic grading order). */
+export const VARIANT_TECHNIQUES = [
+  { id: "variantRule", name: "Variant rule", difficulty: 2, rank: 100 },
+];
+export const T = Object.fromEntries([...TECHNIQUES, ...VARIANT_TECHNIQUES].map((t) => [t.id, t]));
 export const placesDigits = (id) => ["fullHouse", "hiddenSingle", "nakedSingle", "bugPlusOne"].includes(id);
 
 export function makeStep(technique) {
