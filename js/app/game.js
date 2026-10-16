@@ -109,6 +109,18 @@ export class Game {
   /** Every cell that can't share a digit with `c` (variant rules included). */
   peersOf(c) { return this.cm ? this.cm.peers[c] : PEERS[c]; }
 
+  /**
+   * Cells whose notes lose digit d when d is placed in `c`: its peers, plus (variants)
+   * the other cells of any cage or renban line, where digits can't repeat.
+   */
+  noteMates(c) {
+    const mates = new Set(this.peersOf(c));
+    if (this.cm) for (const g of this.cm.groupsOf[c]) {
+      if (g.type === "cage" || g.type === "renban") for (const x of g.cells) if (x !== c) mates.add(x);
+    }
+    return mates;
+  }
+
   get isSolved() { return this.values.every((v, i) => v === this.solution[i]); }
   isGiven(c) { return this.givens[c] !== 0; }
   isWrong(c) { return this.values[c] !== 0 && this.values[c] !== this.solution[c]; }
@@ -193,7 +205,7 @@ export class Game {
   fillCell(p) {
     this.values[p.cell] = p.digit;
     this.notes[p.cell] = 0;
-    for (const q of this.peersOf(p.cell)) this.notes[q] &= ~bit(p.digit);
+    for (const q of this.noteMates(p.cell)) this.notes[q] &= ~bit(p.digit);
     this.selected = p.cell;
     this.pulseAround(p.cell);
   }
@@ -219,7 +231,7 @@ export class Game {
       this.notes[c] = 0;
       if (d !== this.solution[c]) { this.mistakes++; this.shake = c; }
       else {
-        if (this.autoRemoveNotes) for (const p of this.peersOf(c)) this.notes[p] &= ~bit(d);
+        if (this.autoRemoveNotes) for (const p of this.noteMates(c)) this.notes[p] &= ~bit(d);
         this.pulseAround(c);
       }
     }
@@ -253,7 +265,13 @@ export class Game {
   fillAllNotes() {
     this.checkpoint();
     const s = this.candidateState(false);
-    for (let c = 0; c < 81; c++) if (!this.values[c]) this.notes[c] = s.cands[c];
+    for (let c = 0; c < 81; c++) {
+      if (this.values[c]) continue;
+      let m = s.cands[c];
+      // Same "obvious only" rules as the orange warning (adds cage/renban repeats).
+      if (this.cm) for (let d = 1; d <= 9; d++) if ((m & bit(d)) && this.isNoteBlocked(c, d)) m &= ~bit(d);
+      this.notes[c] = m;
+    }
   }
 
   clearAllNotes() {
@@ -294,7 +312,7 @@ export class Game {
     }
     for (const p of st.placements) {
       this.values[p.cell] = p.digit; this.notes[p.cell] = 0;
-      if (this.autoRemoveNotes) for (const q of this.peersOf(p.cell)) this.notes[q] &= ~bit(p.digit);
+      if (this.autoRemoveNotes) for (const q of this.noteMates(p.cell)) this.notes[q] &= ~bit(p.digit);
       this.selected = p.cell;
       this.pulseAround(p.cell);
     }
