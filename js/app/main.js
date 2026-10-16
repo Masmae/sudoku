@@ -746,7 +746,7 @@ function viewSettings() {
     h("div", { class: "section" }, h("h2", {}, "Playing"), h("div", { class: "list" },
       toggle("showMistakes", "Show mistakes"),
       toggle("autoRemoveNotes", "Remove notes when placing a digit"),
-      toggle("noteWarnings", "Show notes that break a rule in orange"),
+      toggle("noteWarnings", "Show notes that clash with a placed digit in orange"),
       toggle("showRemaining", "Show digits remaining on keypad"),
       toggle("autocomplete", `Offer autocomplete when only singles remain (≤ ${AUTOCOMPLETE_MAX_EMPTY} cells)`),
       h("label", { class: "toggle-row" }, h("span", {}, "Appearance"), themeSel))),

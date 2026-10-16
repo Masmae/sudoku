@@ -1,5 +1,5 @@
 import { parsePuzzle, PEERS, UNITS, UNITS_OF, bit, getHint, candidateState, SolveState, nextStep, T,
-  compile, VariantState, variantCandidates, variantHint, variantSingleStep, ck, pairOk, groupOk, has } from "../core/index.js";
+  compile, VariantState, variantCandidates, variantHint, variantSingleStep, ck, has } from "../core/index.js";
 
 /** Autocomplete is offered only near the end, so it never solves most of a puzzle for you. */
 export const AUTOCOMPLETE_MAX_EMPTY = 9;
@@ -73,8 +73,11 @@ export class Game {
   }
 
   /**
-   * Pencil marks that break a rule given the digits already placed: the digit is in a
-   * peer cell, or (variants) it breaks shading, a pair clue or a group clue outright.
+   * Pencil marks that break a rule *obviously*, i.e. without any deduction: the digit
+   * is already placed in a cell this one sees (row, column, box, and in variants the
+   * diagonals, windows, king/knight cells), it contradicts the cell's own even/odd
+   * shading, or it already sits in the same cage / renban line. Sums, thermometers,
+   * dots and the like are left for the player to work out.
    * Returns a Set of ck(cell, digit).
    */
   noteConflicts() {
@@ -96,14 +99,9 @@ export class Game {
     const cm = this.cm;
     if (!cm) return false;
     if (!(cm.cellMask[c] & bit(d))) return true;
-    for (const p of cm.pairsOf[c]) {
-      const other = p.a === c ? p.b : p.a;
-      if (!v[other]) continue;
-      if (!(p.a === c ? pairOk(p, d, v[other]) : pairOk(p, v[other], d))) return true;
-    }
+    // "No repeats" groups: a digit already placed in the same cage or renban line.
     for (const g of cm.groupsOf[c]) {
-      const vals = g.cells.map((x) => (x === c ? d : v[x]));
-      if (!groupOk(g, vals)) return true;
+      if ((g.type === "cage" || g.type === "renban") && g.cells.some((x) => x !== c && v[x] === d)) return true;
     }
     return false;
   }
