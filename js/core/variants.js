@@ -257,7 +257,37 @@ export function mergeFeatures(list) {
   return out;
 }
 
-/** Curated pairings that play well together (used by "Surprise me"). */
+// Variants that change the grid's rules vs. those that draw clues on it.
+export const GRID_RULE_VARIANTS = ["diagonal", "windoku", "antiKing", "antiKnight", "nonConsecutive", "evenOdd"];
+export const CLUE_VARIANTS = VARIANTS.map((v) => v.id).filter((id) => !GRID_RULE_VARIANTS.includes(id));
+
+/**
+ * A random mix for "Surprise me", drawn from every variant: usually a clue variant
+ * plus a grid rule, sometimes two clue variants or a triple. Skips mixes that clash
+ * and any whose key is in `avoid` (recent picks), so it doesn't keep repeating.
+ */
+export function surpriseCombo(rand = Math.random, avoid = new Set()) {
+  const pick = (list, not = []) => {
+    const pool = list.filter((x) => !not.includes(x));
+    return pool[Math.floor(rand() * pool.length)];
+  };
+  let fallback = null;
+  for (let tries = 0; tries < 200; tries++) {
+    const roll = rand();
+    const c1 = pick(CLUE_VARIANTS);
+    let ids;
+    if (roll < 0.5) ids = [c1, pick(GRID_RULE_VARIANTS)];
+    else if (roll < 0.8) ids = [c1, pick(CLUE_VARIANTS, [c1])];
+    else if (roll < 0.9) { const c2 = pick(CLUE_VARIANTS, [c1]); ids = [c1, c2, pick(GRID_RULE_VARIANTS)]; }
+    else { const r1 = pick(GRID_RULE_VARIANTS); ids = [c1, r1, pick(GRID_RULE_VARIANTS, [r1])]; }
+    if (!canCombine(ids)) continue;
+    fallback = fallback ?? ids;
+    if (!avoid.has(comboKey(ids))) return ids;
+  }
+  return fallback ?? GOOD_COMBOS[0];
+}
+
+/** Curated pairings that play well together. */
 export const GOOD_COMBOS = [
   ["killer", "antiKnight"], ["killer", "diagonal"], ["thermo", "antiKing"], ["thermo", "diagonal"],
   ["arrow", "windoku"], ["arrow", "antiKnight"], ["kropki", "xv"], ["kropki", "diagonal"],

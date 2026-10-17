@@ -363,3 +363,4 @@ textarea { width: 100%; min-height: 110px; font: 14px ui-monospace, Menlo, monos
 :root[data-theme="dark"] { --conflict: #ffa53a; }
 .notes span.conflict { color: var(--conflict); font-weight: 700; background: color-mix(in srgb, var(--conflict) 16%, transparent); }
 .notes span.conflict.focus { box-shadow: inset 0 0 0 1.5px var(--conflict); }
+.btn-stack { display: grid; gap: 8px; margin-top: 4px; }

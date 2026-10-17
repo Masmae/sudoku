@@ -8,7 +8,7 @@ import {
   TECHNIQUES, T, DIFFICULTIES, difficultyTitle, placesDigits, nudge, resultText, cellName, cellNames,
   candidateState, drillState, firstStep, judgeDrill, ck, has, parsePuzzle, hasNoConflicts, bruteSolve, SolveState, nextStep,
   puzzleString, logicalSolve, gradePuzzle, VARIANTS, VARIANT, VariantState, variantNextStep,
-  canCombine, comboKey, comboName, GOOD_COMBOS,
+  canCombine, comboKey, comboName, surpriseCombo,
 } from "../core/index.js";
 
 // ---------------- App state ----------------
@@ -47,9 +47,37 @@ const variantIds = (p) => p.variants ?? [p.variant];
 const puzzleTitle = (p) => (p.kind === "variant" ? `${comboName(variantIds(p))} · ${difficultyTitle(p.difficulty)}` : difficultyTitle(p.difficulty));
 
 /** Rules dialog for one variant or a mix (accepts an id, a list of ids, or a puzzle). */
-/** Tell the player when the generator couldn't hit the requested level in time. */
-function levelNotice(p, asked) {
-  if (p.difficulty !== asked) toast(`No ${difficultyTitle(asked)} puzzle turned up quickly for this mix — this one is ${difficultyTitle(p.difficulty)}.`, 4500);
+/**
+ * Generates a variant puzzle at `level`. If the generator only finds an easier one in
+ * time, asks whether to play that or keep looking. Resolves to a puzzle or null.
+ */
+async function obtainVariant(ids, level, onStatus) {
+  const name = comboName([].concat(ids));
+  for (let round = 1; ; round++) {
+    onStatus(`Making a ${difficultyTitle(level).toLowerCase()} ${name} puzzle…${level === 3 ? " Hard ones can take up to 15 seconds." : ""}${round > 1 ? ` (try ${round})` : ""}`);
+    const p = await app.lib.nextVariant(ids, level);
+    if (!p) return null;
+    if (p.difficulty >= level) return p;
+    const choice = await ask(`No ${difficultyTitle(level)} puzzle yet`,
+      `The best ${name} puzzle found so far is ${difficultyTitle(p.difficulty)}. Play it, or keep looking for a ${difficultyTitle(level)} one?`,
+      [["cancel", "Cancel"], ["play", `Play ${difficultyTitle(p.difficulty)}`], ["wait", "Keep looking", true]]);
+    if (choice === "play") return p;
+    if (choice !== "wait") return null;
+  }
+}
+
+/** Small modal with buttons; resolves to the chosen button's value (or "cancel"). */
+function ask(title, message, buttons) {
+  return new Promise((resolve) => {
+    let value = "cancel";
+    // Main choice first, Cancel last, stacked full-width (fits phones).
+    const ordered = [...buttons.filter((b) => b[2]), ...buttons.filter((b) => !b[2] && b[0] !== "cancel"), ...buttons.filter((b) => b[0] === "cancel")];
+    const dlg = h("dialog", {}, h("h2", {}, title), h("p", {}, message),
+      h("div", { class: "btn-stack" },
+        ordered.map(([v, label, primary]) => h("button", { class: "btn block" + (primary ? " primary" : ""), onclick: () => { value = v; dlg.close(); } }, label))));
+    dlg.addEventListener("close", () => { dlg.remove(); resolve(value); });
+    document.body.append(dlg); dlg.showModal();
+  });
 }
 
 function showRules(what) {
@@ -440,17 +468,23 @@ function mixCard() {
   async function start(ids, lvl, title) {
     if (ids.length < 2) return;
     card.querySelectorAll("button").forEach((b) => (b.disabled = true));
-    status.replaceChildren(h("span", { class: "spinner" }), ` Making a ${title.toLowerCase()} ${comboName(ids)} puzzle…${lvl === 3 ? " Hard ones can take up to 15 seconds." : ""}`);
     try {
-      const p = await app.lib.nextVariant(ids, lvl);
-      if (p) { startGame(p); levelNotice(p, lvl); }
-      else { status.textContent = "That mix is too restrictive to build quickly — try another."; draw(); }
+      const p = await obtainVariant(ids, lvl, (msg) => status.replaceChildren(h("span", { class: "spinner" }), " " + msg));
+      if (p) startGame(p);
+      else { status.textContent = "No puzzle started. That mix may be too restrictive — try again or pick another."; draw(); }
     } catch (err) { status.textContent = "Something went wrong: " + err.message; draw(); }
   }
   const card = h("div", { class: "section" }, h("h2", {}, "Mix variants"), h("div", { class: "card mix" },
     chips, summary,
     h("div", { class: "btn-row" },
-      h("button", { class: "btn", onclick: () => { const c = GOOD_COMBOS[Math.floor(Math.random() * GOOD_COMBOS.length)]; chosen.splice(0, chosen.length, ...c); draw(); } }, "Surprise me"),
+      h("button", { class: "btn", onclick: () => {
+        // Avoid the current selection and the last 40 surprises.
+        const recent = store.load("surpriseRecent", []);
+        const avoid = new Set([...recent, ...(chosen.length ? [comboKey(chosen)] : [])]);
+        const c = surpriseCombo(Math.random, avoid);
+        store.save("surpriseRecent", [comboKey(c), ...recent].slice(0, 40));
+        chosen.splice(0, chosen.length, ...c); draw();
+      } }, "Surprise me"),
       h("button", { class: "btn", onclick: () => chosen.length >= 2 && showRules(chosen.slice()) }, "Rules")),
     h("div", { class: "level-row" }, ...levelBtns),
     status));
@@ -462,11 +496,10 @@ function chooseVariant(v) {
   const status = h("p", { class: "small muted", role: "status" });
   const pick = (level, title) => h("button", { class: "btn" + (level === 2 ? " primary" : ""), onclick: async (e) => {
     dlg.querySelectorAll("button").forEach((b) => (b.disabled = true));
-    status.replaceChildren(h("span", { class: "spinner" }), ` Making a ${title.toLowerCase()} ${v.name} puzzle…${level === 3 ? " Hard ones can take up to 15 seconds." : ""}`);
     try {
-      const p = await app.lib.nextVariant(v.id, level);
+      const p = await obtainVariant(v.id, level, (msg) => status.replaceChildren(h("span", { class: "spinner" }), " " + msg));
       dlg.close();
-      if (p) { startGame(p); levelNotice(p, level); } else toast("Couldn't make one — try again.");
+      if (p) startGame(p);
     } catch (err) { status.textContent = "Something went wrong: " + err.message; dlg.querySelectorAll("button").forEach((b) => (b.disabled = false)); }
   } }, title);
   const dlg = h("dialog", {}, h("h2", {}, v.name), h("p", {}, v.rules), status,
