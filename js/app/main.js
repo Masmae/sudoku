@@ -61,6 +61,7 @@ async function obtainVariant(ids, level, onStatus) {
     onStatus(`Making a ${difficultyTitle(level).toLowerCase()} ${name} puzzle…${level >= 3 ? ` ${difficultyTitle(level)} ones can take up to 15 seconds.` : ""}${round > 1 ? ` (try ${round})` : ""}`);
     const p = await app.lib.nextVariant(ids, level);
     if (!p) return null;
+    if (round === 1) app.lib.owe(app.lib.constructor.variantKey(ids, level));   // one spare for next time
     if (p.difficulty >= level) return p;   // harder than asked is fine: it's labelled honestly
     const choice = await ask(`No ${difficultyTitle(level)} puzzle yet`,
       `The best ${name} puzzle found so far is ${difficultyTitle(p.difficulty)}. Play it, or keep looking for a ${difficultyTitle(level)} one?`,

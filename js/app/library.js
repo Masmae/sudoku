@@ -1,10 +1,9 @@
 import * as store from "./storage.js";
 import { randomTransform, transformDrill, transformPuzzle, comboKey } from "../core/index.js";
 
-// Every (variant or mix, level) keeps a stock of ready puzzles: the ones shipped in
-// data/variant-bank.json plus ones generated on this device. Taking one queues a
-// replacement in the background, so the stock stays at STOCK_TARGET.
-const STOCK_TARGET = 10;
+// Every (variant or mix, level) has a stock of ready puzzles: the ones shipped in
+// data/variant-bank.json plus ones generated on this device. Using one queues exactly
+// one replacement in the background.
 const POOL_MAX_KEYS = 60;     // combinations remembered for refills (mixes you've played, etc.)
 
 /** Puzzle sources: bundled (shipped with the app, re-graded before play) and generated in a worker. */
@@ -34,6 +33,7 @@ export class Library {
     this.pool = store.load("pool", {});          // key -> [puzzle, ...]
     this.poolKeys = store.load("poolKeys", []);  // recently used keys, newest first
     this.refillQueue = [];
+    this.owed = store.load("owed", {});         // key -> replacements still to make (one per puzzle used)
     this.refilling = false;
     this.onPoolChange = () => {};
   }
@@ -53,8 +53,8 @@ export class Library {
       const vb = await (await fetch("data/variant-bank.json", { cache: "no-cache" })).json();
       this.variantBank = Array.isArray(vb.puzzles) ? vb.puzzles : [];
     } catch { /* optional */ }
-    // Finish any replacements that were still pending when the app last closed.
-    for (const key of this.poolKeys) if (this.stockCount(key) < STOCK_TARGET) this.scheduleRefill(key);
+    // Finish any replacements that were still owed when the app last closed.
+    for (const key of Object.keys(this.owed)) this.scheduleRefill(key);
   }
 
   run(type, args, worker = this.worker) {
@@ -92,6 +92,13 @@ export class Library {
   /** Ready puzzles for a key: shipped (unplayed) + generated on this device. */
   stockCount(key) { return this.bankFor(key).length + (this.pool[key]?.length ?? 0); }
 
+  /** Exactly one replacement for each puzzle used. */
+  owe(key) {
+    this.owed[key] = (this.owed[key] ?? 0) + 1;
+    store.save("owed", this.owed);
+    this.scheduleRefill(key);
+  }
+
   /** Remember a key as "in use" and queue it for a background top-up. */
   scheduleRefill(key) {
     this.poolKeys = [key, ...this.poolKeys.filter((k) => k !== key)].slice(0, POOL_MAX_KEYS);
@@ -108,13 +115,16 @@ export class Library {
       while (this.refillQueue.length) {
         const key = this.refillQueue.shift();
         let misses = 0;
-        while (this.stockCount(key) < STOCK_TARGET && misses < 3) {
+        while ((this.owed[key] ?? 0) > 0 && misses < 3) {
           const [kind, a, b] = key.split("|");
           const p = kind === "v"
             ? await this.run("generateVariantExact", { variant: a.split("+"), level: Number(b), budgetMs: 25000 }, this.bgWorker)
             : await this.run("generate", { difficulty: Number(a) }, this.bgWorker);
           if (!p) { misses++; continue; }
           (this.pool[key] ??= []).push(p);
+          this.owed[key]--;
+          if (!this.owed[key]) delete this.owed[key];
+          store.save("owed", this.owed);
           this.savePool();
         }
       }
@@ -132,7 +142,7 @@ export class Library {
     let p = this.bankFor(key)[0] ?? null;
     if (p) this.played.add(p.puzzle);              // counts as taken right away, so the stock drops
     else { p = this.pool[key]?.shift() ?? null; if (p) this.savePool(); }
-    this.scheduleRefill(key);                      // replace it in the background
+    if (p) this.owe(key);                          // one replacement for the one you took
     return p;
   }
 
@@ -146,14 +156,15 @@ export class Library {
   /** Next puzzle: an unplayed bundled one (re-verified), else generated on the spot. */
   async next(d) {
     const key = Library.classicKey(d);
-    this.scheduleRefill(key);   // no-op while 10+ bundled puzzles of this level are unplayed
     for (const p of this.bundled) {
       if (p.difficulty !== d || this.played.has(p.puzzle)) continue;
       const g = await this.run("grade", { puzzle: p.puzzle });
       if (g && g.difficulty === d) return g;
     }
     const ready = this.pool[key]?.shift();
-    if (ready) { this.savePool(); this.scheduleRefill(key); return ready; }
+    if (ready) { this.savePool(); this.owe(key); return ready; }
+    // Bundled ones used up and nothing in stock: make this one now, and one spare.
+    this.owe(key);
     return this.run("generate", { difficulty: d });
   }
 
