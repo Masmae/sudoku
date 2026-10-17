@@ -9,7 +9,7 @@ on:
     - cron: "0 7 * * 1"         # weekly, Monday 07:00 UTC: keeps filling any gaps
   push:
     branches: [main]
-    paths: ["js/core/**", "tools/**"]
+    paths: ["js/core/**", "tools/**", ".github/workflows/build-dataset.yml"]
 
 permissions:
   contents: write               # commit the dataset
@@ -41,7 +41,12 @@ jobs:
           git add data/variant-bank.json
           if git diff --cached --quiet; then echo "no changes"; exit 0; fi
           git commit -m "Update puzzle dataset"
-          git push
+          # The app may have been redeployed while this ran: replay on top, then push.
+          for i in 1 2 3; do
+            git pull --rebase -q origin main && git push && exit 0
+            sleep 5
+          done
+          exit 1
       - name: Redeploy GitHub Pages
         env:
           GH_TOKEN: ${{ github.token }}
