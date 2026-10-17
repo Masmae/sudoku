@@ -356,7 +356,8 @@ textarea { width: 100%; min-height: 110px; font: 14px ui-monospace, Menlo, monos
 .mix-chips .chip:disabled { opacity: .35; cursor: default; }
 .mix-summary { margin: 0; font-weight: 500; color: var(--text); }
 .rules-list { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
-.level-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.level-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.level-row .btn { padding: 8px 4px; font-size: 14px; min-width: 0; }
 /* Pencil marks that break a rule (digit already placed in a peer, or a variant clue) */
 :root { --conflict: #e07a00; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --conflict: #ffa53a; } }

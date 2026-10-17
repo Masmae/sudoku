@@ -8,7 +8,7 @@ self.onmessage = (e) => {
     switch (type) {
       case "generate": result = generate(args.difficulty); break;
       case "grade": result = gradePuzzle(args.puzzle); break;
-      case "generateVariant": result = generateVariant(args.variant, args.level, Math.random, args.level === 3 ? 12000 : 6000); break;
+      case "generateVariant": result = generateVariant(args.variant, args.level, Math.random, args.level >= 3 ? 12000 : 6000); break;
       case "verifyVariant": result = verifyVariant(args.puzzle); break;
       case "validateDrills": result = args.drills.filter(isValidDrill); break;
       case "findDrills": result = findDrills(args.technique, args.count); break;

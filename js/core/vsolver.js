@@ -204,9 +204,15 @@ export function variantHint(cm, values, notes, solution) {
 
 // ---------------------------------------------------------------- grading + generation
 
-export const VARIANT_LEVELS = [{ id: 1, title: "Easy" }, { id: 2, title: "Medium" }, { id: 3, title: "Hard" }];
+export const VARIANT_LEVELS = [
+  { id: 1, title: "Easy" }, { id: 2, title: "Medium" }, { id: 3, title: "Hard" }, { id: 4, title: "Expert" }, { id: 5, title: "Master" },
+];
 
-/** 1 = singles and simple rule logic, 2 = also basic classic techniques, 3 = advanced. */
+/**
+ * Same five levels as classic puzzles: the level is the hardest classic technique the
+ * solve path needs (Hard = X-Wing tier, Expert = wings/Swordfish/coloring, Master =
+ * chains). A long run of variant-rule steps lifts an otherwise Easy puzzle to Medium.
+ */
 export function gradeVariant(cm, values) {
   const r = variantLogicalSolve(cm, values);
   if (!r.solved) return null;
@@ -215,7 +221,7 @@ export function gradeVariant(cm, values) {
     if (st.technique === "variantRule") ruleSteps++;
     else classic = Math.max(classic, T[st.technique].difficulty);
   }
-  const level = classic >= 3 ? 3 : classic === 2 || ruleSteps > 25 ? 2 : 1;
+  const level = classic === 1 && ruleSteps > 25 ? 2 : classic;
   const used = new Set(r.steps.map((s) => s.technique));
   return { level, steps: r.steps.length, techniques: [...TECHNIQUES, T.variantRule].filter((t) => used.has(t.id)).map((t) => t.id) };
 }

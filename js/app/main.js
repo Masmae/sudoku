@@ -54,10 +54,10 @@ const puzzleTitle = (p) => (p.kind === "variant" ? `${comboName(variantIds(p))} 
 async function obtainVariant(ids, level, onStatus) {
   const name = comboName([].concat(ids));
   for (let round = 1; ; round++) {
-    onStatus(`Making a ${difficultyTitle(level).toLowerCase()} ${name} puzzle…${level === 3 ? " Hard ones can take up to 15 seconds." : ""}${round > 1 ? ` (try ${round})` : ""}`);
+    onStatus(`Making a ${difficultyTitle(level).toLowerCase()} ${name} puzzle…${level >= 3 ? ` ${difficultyTitle(level)} ones can take up to 15 seconds.` : ""}${round > 1 ? ` (try ${round})` : ""}`);
     const p = await app.lib.nextVariant(ids, level);
     if (!p) return null;
-    if (p.difficulty >= level) return p;
+    if (p.difficulty >= level) return p;   // harder than asked is fine: it's labelled honestly
     const choice = await ask(`No ${difficultyTitle(level)} puzzle yet`,
       `The best ${name} puzzle found so far is ${difficultyTitle(p.difficulty)}. Play it, or keep looking for a ${difficultyTitle(level)} one?`,
       [["cancel", "Cancel"], ["play", `Play ${difficultyTitle(p.difficulty)}`], ["wait", "Keep looking", true]]);
@@ -429,6 +429,7 @@ function viewGame() {
 }
 
 // ---------------- Variants ----------------
+const VARIANT_LEVEL_LIST = [[1, "Easy"], [2, "Medium"], [3, "Hard"], [4, "Expert"], [5, "Master"]];
 const VARIANT_GROUPS = [
   ["Cages & lines", ["killer", "thermo", "arrow", "germanWhisper", "renban", "palindrome", "sandwich"]],
   ["Dots & signs", ["kropki", "xv", "greaterThan", "consecutive", "quadruple"]],
@@ -453,7 +454,7 @@ function mixCard() {
   const chips = h("div", { class: "mix-chips" });
   const summary = h("p", { class: "small muted mix-summary" });
   const status = h("p", { class: "small muted", role: "status" });
-  const levelBtns = [[1, "Easy"], [2, "Medium"], [3, "Hard"]].map(([lvl, title]) =>
+  const levelBtns = VARIANT_LEVEL_LIST.map(([lvl, title]) =>
     h("button", { class: "btn" + (lvl === 2 ? " primary" : ""), onclick: () => start(chosen.slice(), lvl, title) }, title));
   const draw = () => {
     chips.replaceChildren(...VARIANTS.map((v) => {
@@ -503,8 +504,8 @@ function chooseVariant(v) {
     } catch (err) { status.textContent = "Something went wrong: " + err.message; dlg.querySelectorAll("button").forEach((b) => (b.disabled = false)); }
   } }, title);
   const dlg = h("dialog", {}, h("h2", {}, v.name), h("p", {}, v.rules), status,
-    h("div", { class: "btn-row" }, h("button", { class: "btn", onclick: () => dlg.close() }, "Cancel"), h("span", { class: "spacer" }),
-      pick(1, "Easy"), pick(2, "Medium"), pick(3, "Hard")));
+    h("div", { class: "level-row" }, VARIANT_LEVEL_LIST.map(([lvl, title]) => pick(lvl, title))),
+    h("div", { class: "btn-row", style: { marginTop: "10px" } }, h("span", { class: "spacer" }), h("button", { class: "btn", onclick: () => dlg.close() }, "Cancel")));
   dlg.addEventListener("close", () => dlg.remove());
   document.body.append(dlg); dlg.showModal();
 }
