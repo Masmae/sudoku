@@ -1,7 +1,7 @@
 // Offline support. Network-first for the app's own files (so updates arrive as soon
 // as you're online), falling back to the cached copy when offline. Never touches
 // other origins.
-const CACHE = "sudoku-trainer-v2";
+const CACHE = "sudoku-trainer-v3";
 const FILES = [
   "./", "index.html", "manifest.webmanifest", "icon.svg",
   "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png",
@@ -14,8 +14,13 @@ const FILES = [
   "js/core/hint.js", "js/core/drill.js", "js/core/transform.js", "js/core/variants.js", "js/core/vsolver.js",
 ];
 
+// Cached if present; the app works without them.
+const OPTIONAL = ["data/variant-bank.json"];
+
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE)
+    .then((c) => c.addAll(FILES).then(() => Promise.all(OPTIONAL.map((f) => c.add(f).catch(() => {})))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {

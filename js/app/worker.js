@@ -10,6 +10,15 @@ self.onmessage = (e) => {
       case "grade": result = gradePuzzle(args.puzzle); break;
       case "generateVariant": result = generateVariant(args.variant, args.level, Math.random, args.level >= 3 ? 12000 : 6000); break;
       case "verifyVariant": result = verifyVariant(args.puzzle); break;
+      case "generateVariantExact": {
+        // Background refill: only an exact-level puzzle is worth keeping.
+        const until = Date.now() + args.budgetMs;
+        while (!result && Date.now() < until) {
+          const p = generateVariant(args.variant, args.level, Math.random, Math.min(12000, until - Date.now()));
+          if (p && p.difficulty === args.level) result = p;
+        }
+        break;
+      }
       case "validateDrills": result = args.drills.filter(isValidDrill); break;
       case "findDrills": result = findDrills(args.technique, args.count); break;
       case "practice": {

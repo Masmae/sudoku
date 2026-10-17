@@ -53,6 +53,10 @@ const puzzleTitle = (p) => (p.kind === "variant" ? `${comboName(variantIds(p))} 
  */
 async function obtainVariant(ids, level, onStatus) {
   const name = comboName([].concat(ids));
+  // Instant: a ready puzzle from the pool or the shipped dataset (a replacement is
+  // then generated in the background).
+  const ready = app.lib.takeVariant(ids, level);
+  if (ready) return ready;
   for (let round = 1; ; round++) {
     onStatus(`Making a ${difficultyTitle(level).toLowerCase()} ${name} puzzle…${level >= 3 ? ` ${difficultyTitle(level)} ones can take up to 15 seconds.` : ""}${round > 1 ? ` (try ${round})` : ""}`);
     const p = await app.lib.nextVariant(ids, level);
@@ -454,8 +458,7 @@ function mixCard() {
   const chips = h("div", { class: "mix-chips" });
   const summary = h("p", { class: "small muted mix-summary" });
   const status = h("p", { class: "small muted", role: "status" });
-  const levelBtns = VARIANT_LEVEL_LIST.map(([lvl, title]) =>
-    h("button", { class: "btn" + (lvl === 2 ? " primary" : ""), onclick: () => start(chosen.slice(), lvl, title) }, title));
+  const levelRow = h("div", { class: "level-row" });
   const draw = () => {
     chips.replaceChildren(...VARIANTS.map((v) => {
       const on = chosen.includes(v.id);
@@ -464,7 +467,8 @@ function mixCard() {
         onclick: () => { on ? chosen.splice(chosen.indexOf(v.id), 1) : chosen.push(v.id); draw(); } }, v.name);
     }));
     summary.textContent = chosen.length >= 2 ? comboName(chosen) : chosen.length === 1 ? `${VARIANT[chosen[0]].name} + … (pick one or two more)` : "Pick 2 or 3 variants to combine.";
-    levelBtns.forEach((b) => (b.disabled = chosen.length < 2));
+    levelRow.replaceChildren(...VARIANT_LEVEL_LIST.map(([lvl, title]) =>
+      h("button", { class: "btn" + (lvl === 2 ? " primary" : ""), disabled: chosen.length < 2, onclick: () => start(chosen.slice(), lvl, title) }, title)));
   };
   async function start(ids, lvl, title) {
     if (ids.length < 2) return;
@@ -487,15 +491,20 @@ function mixCard() {
         chosen.splice(0, chosen.length, ...c); draw();
       } }, "Surprise me"),
       h("button", { class: "btn", onclick: () => chosen.length >= 2 && showRules(chosen.slice()) }, "Rules")),
-    h("div", { class: "level-row" }, ...levelBtns),
+    levelRow,
     status));
   draw();
+  // Keep the Settings "ready" count current after background refills.
+  app.lib.onPoolChange = () => {
+    const rc = document.getElementById("ready-count");
+    if (rc) rc.textContent = String(app.lib.readyCount());
+  };
   return card;
 }
 
 function chooseVariant(v) {
   const status = h("p", { class: "small muted", role: "status" });
-  const pick = (level, title) => h("button", { class: "btn" + (level === 2 ? " primary" : ""), onclick: async (e) => {
+  const pick = (level, title) => h("button", { class: "btn" + (level === 2 ? " primary" : ""), onclick: async () => {
     dlg.querySelectorAll("button").forEach((b) => (b.disabled = true));
     try {
       const p = await obtainVariant(v.id, level, (msg) => status.replaceChildren(h("span", { class: "spinner" }), " " + msg));
@@ -791,8 +800,9 @@ function viewSettings() {
       h("div", { class: "toggle-row" }, h("span", {}, "Techniques mastered"), h("span", { class: "muted" }, `${mastered} of ${TECHNIQUES.length}`)))),
     h("div", { class: "section" }, h("h2", {}, "Puzzles"), h("div", { class: "list" },
       h("div", { class: "toggle-row" }, h("span", {}, "Built-in puzzles"), h("span", { class: "muted" }, String(app.lib.bundled.length))),
+      h("div", { class: "toggle-row" }, h("span", {}, "Ready-to-play variant puzzles"), h("span", { class: "muted", id: "ready-count" }, String(app.lib.readyCount()))),
       h("div", { class: "toggle-row" }, h("span", {}, "New puzzles on demand"), h("span", { class: "muted" }, "Generated on this device"))),
-      h("p", { class: "footnote" }, "Everything runs locally. This page makes no network requests except loading its own files.")),
+      h("p", { class: "footnote" }, "When you start a puzzle, a replacement for the same variant and level is generated in the background, so the next one starts instantly. Everything runs locally.")),
     h("div", { class: "section" }, h("div", { class: "list" },
       h("button", { class: "row", onclick: () => {
         if (!confirm("Erase all progress, stats and the current game?")) return;
