@@ -114,13 +114,20 @@ export class Library {
     try {
       while (this.refillQueue.length) {
         const key = this.refillQueue.shift();
+        // Gentle on the phone: one try of at most 15 s (one CPU core) per replacement.
+        // If it misses, give up on it; the weekly cloud build fills the stock instead.
         let misses = 0;
-        while ((this.owed[key] ?? 0) > 0 && misses < 3) {
+        while ((this.owed[key] ?? 0) > 0 && misses < 1) {
           const [kind, a, b] = key.split("|");
           const p = kind === "v"
-            ? await this.run("generateVariantExact", { variant: a.split("+"), level: Number(b), budgetMs: 25000 }, this.bgWorker)
+            ? await this.run("generateVariantExact", { variant: a.split("+"), level: Number(b), budgetMs: 15000 }, this.bgWorker)
             : await this.run("generate", { difficulty: Number(a) }, this.bgWorker);
-          if (!p) { misses++; continue; }
+          if (!p) {
+            misses++;
+            delete this.owed[key];
+            store.save("owed", this.owed);
+            continue;
+          }
           (this.pool[key] ??= []).push(p);
           this.owed[key]--;
           if (!this.owed[key]) delete this.owed[key];

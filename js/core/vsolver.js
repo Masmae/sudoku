@@ -230,12 +230,12 @@ export function gradeVariant(cm, values) {
  * Generates a variant puzzle at roughly `level` (1-3). Every puzzle has exactly one
  * solution and can be solved by the hint engine.
  */
-export function generateVariant(variant, level = 2, rand = Math.random, budgetMs = 6000) {
+export function generateVariant(variant, level = 2, rand = Math.random, budgetMs = 6000, hardDeadline = Infinity) {
   const ids = [].concat(variant);
   if (!canCombine(ids)) return null;
   const t0 = Date.now();
   let best = null, gridFailures = 0;
-  while (Date.now() - t0 < budgetMs || !best) {
+  while ((Date.now() - t0 < budgetMs || !best) && Date.now() < hardDeadline) {
     // A full grid that obeys every grid rule at once (diagonal, anti-knight, ...).
     const rulesModel = compile({ rules: rulesFor(ids) });
     const full = variantSolve(rulesModel, new Array(81).fill(0), 1, rand, 400000).solution;
@@ -255,12 +255,12 @@ export function generateVariant(variant, level = 2, rand = Math.random, budgetMs
       vals[c] = 0;
       const r = variantSolve(cm, vals, 2, null, 60000);
       if (r.count !== 1) vals[c] = keep;
-      if (Date.now() - t0 > budgetMs * 3) break;
+      if (Date.now() - t0 > budgetMs * 3 || Date.now() > hardDeadline) break;
     }
     // Add givens back until the hint engine can solve it, then until it matches the level.
     let grade = gradeVariant(cm, vals);
     let guard = 0;
-    while ((!grade || grade.level > level) && guard++ < 81) {
+    while ((!grade || grade.level > level) && guard++ < 81 && Date.now() < hardDeadline) {
       const s = variantLogicalSolve(cm, vals).final;
       const stuck = vals.map((v, c) => (v ? -1 : c)).filter((c) => c >= 0 && !s.values[c]);
       const pool = stuck.length ? stuck : vals.map((v, c) => (v ? -1 : c)).filter((c) => c >= 0);
@@ -273,7 +273,7 @@ export function generateVariant(variant, level = 2, rand = Math.random, budgetMs
     // dots, arrows, sandwich numbers, ...) while it stays unique and hint-solvable.
     let thinned = features;
     if (grade.level < level) {
-      ({ features: thinned, grade } = thinFeatures(features, vals, level, grade, rand, t0 + budgetMs * 1.5));
+      ({ features: thinned, grade } = thinFeatures(features, vals, level, grade, rand, Math.min(t0 + budgetMs * 1.5, hardDeadline)));
     }
     const puzzle = {
       kind: "variant", variant: ids.length === 1 ? ids[0] : ids.join("+"), variants: ids, features: thinned,

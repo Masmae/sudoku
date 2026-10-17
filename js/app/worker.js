@@ -14,7 +14,7 @@ self.onmessage = (e) => {
         // Background refill: only an exact-level puzzle is worth keeping.
         const until = Date.now() + args.budgetMs;
         while (!result && Date.now() < until) {
-          const p = generateVariant(args.variant, args.level, Math.random, Math.min(12000, until - Date.now()));
+          const p = generateVariant(args.variant, args.level, Math.random, Math.min(12000, until - Date.now()), until);
           if (p && p.difficulty === args.level) result = p;
         }
         break;
