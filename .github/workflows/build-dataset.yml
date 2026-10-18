@@ -1,12 +1,14 @@
 # Builds the ready-made puzzle dataset (data/variant-bank.json) on GitHub's machines,
 # so no generation has to happen on a laptop or phone. Each run re-verifies what's
-# there, fills gaps for up to ~55 minutes, commits the result and redeploys Pages.
+# there, fills gaps for up to ~5.5 hours, commits the result and redeploys Pages.
+# The dataset covers every single variant, all 151 pairs and 48 three-way mixes; once it's
+# full, a daily run only re-verifies and tops up (a few minutes).
 name: Build puzzle dataset
 
 on:
   workflow_dispatch:            # "Run workflow" button on the Actions tab
   schedule:
-    - cron: "0 7 * * 1"         # weekly, Monday 07:00 UTC: keeps filling any gaps
+    - cron: "0 7 * * *"         # daily 07:00 UTC: fills gaps until full, then just tops up
   push:
     branches: [main]
     paths: ["js/core/**", "tools/**", ".github/workflows/build-dataset.yml"]
@@ -22,7 +24,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -31,7 +33,7 @@ jobs:
       - name: Re-verify existing puzzles
         run: node tools/verify-variant-bank.mjs
       - name: Build missing puzzles (time-limited)
-        run: node tools/build-variant-bank.mjs --workers 4 --total-minutes 55 --minutes-per-key 3
+        run: node tools/build-variant-bank.mjs --workers 4 --total-minutes 320 --minutes-per-key 3
       - name: Verify again
         run: node tools/verify-variant-bank.mjs
       - name: Commit dataset

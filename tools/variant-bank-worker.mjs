@@ -4,12 +4,12 @@ import { setPriority } from "node:os";
 try { setPriority(19); } catch { /* lowest priority where allowed */ }
 import { generateVariant, verifyVariant } from "../js/core/index.js";
 
-parentPort.on("message", ({ ids, level, want, budgetMs }) => {
+parentPort.on("message", ({ ids, level, want, budgetMs, fullBudget }) => {
   const found = [];
   const until = Date.now() + budgetMs;
   while (found.length < want && Date.now() < until) {
     const p = generateVariant(ids, level, Math.random, Math.min(15000, until - Date.now()));
     if (p && p.difficulty === level && verifyVariant(p) && !found.some((q) => q.puzzle === p.puzzle)) found.push(p);
   }
-  parentPort.postMessage({ ids, level, want, found });
+  parentPort.postMessage({ ids, level, want, found, fullBudget });
 });

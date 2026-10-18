@@ -468,8 +468,13 @@ function mixCard() {
         onclick: () => { on ? chosen.splice(chosen.indexOf(v.id), 1) : chosen.push(v.id); draw(); } }, v.name);
     }));
     summary.textContent = chosen.length >= 2 ? comboName(chosen) : chosen.length === 1 ? `${VARIANT[chosen[0]].name} + … (pick one or two more)` : "Pick 2 or 3 variants to combine.";
+    // ⏳ = no ready-made puzzle for this mix and level on this device: it would be generated now.
+    const stocked = (lvl) => app.lib.stockCount(Library.variantKey(chosen, lvl)) > 0;
     levelRow.replaceChildren(...VARIANT_LEVEL_LIST.map(([lvl, title]) =>
-      h("button", { class: "btn" + (lvl === 2 ? " primary" : ""), disabled: chosen.length < 2, onclick: () => start(chosen.slice(), lvl, title) }, title)));
+      h("button", { class: "btn" + (lvl === 2 ? " primary" : ""), disabled: chosen.length < 2, onclick: () => start(chosen.slice(), lvl, title) },
+        title, chosen.length >= 2 && !stocked(lvl) ? " ⏳" : "")));
+    if (chosen.length >= 2 && VARIANT_LEVEL_LIST.some(([lvl]) => !stocked(lvl)))
+      summary.append(h("br"), "⏳ = not ready-made yet; that level is generated when you start it.");
   };
   async function start(ids, lvl, title) {
     if (ids.length < 2) return;
@@ -487,7 +492,9 @@ function mixCard() {
         // Avoid the current selection and the last 40 surprises.
         const recent = store.load("surpriseRecent", []);
         const avoid = new Set([...recent, ...(chosen.length ? [comboKey(chosen)] : [])]);
-        const c = surpriseCombo(Math.random, avoid);
+        // Only mixes with ready-made Easy–Hard puzzles, so starting one is instant.
+        const ready = (ids) => [1, 2, 3].every((lvl) => app.lib.stockCount(Library.variantKey(ids, lvl)) > 0);
+        const c = surpriseCombo(Math.random, avoid, ready);
         store.save("surpriseRecent", [comboKey(c), ...recent].slice(0, 40));
         chosen.splice(0, chosen.length, ...c); draw();
       } }, "Surprise me"),

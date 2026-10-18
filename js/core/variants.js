@@ -266,7 +266,20 @@ export const CLUE_VARIANTS = VARIANTS.map((v) => v.id).filter((id) => !GRID_RULE
  * plus a grid rule, sometimes two clue variants or a triple. Skips mixes that clash
  * and any whose key is in `avoid` (recent picks), so it doesn't keep repeating.
  */
-export function surpriseCombo(rand = Math.random, avoid = new Set()) {
+/**
+ * `ready(ids)` (optional) says whether a mix has ready-made puzzles; when given, Surprise only
+ * suggests ready mixes (still varied: there are ~200), so starting one is instant.
+ */
+export function surpriseCombo(rand = Math.random, avoid = new Set(), ready = null) {
+  if (ready) {
+    const pool = BANK_COMBOS.filter((ids) => ready(ids));
+    const fresh = pool.filter((ids) => !avoid.has(comboKey(ids)));
+    // Mostly pairs, sometimes a three-way mix (like before).
+    const triples = fresh.filter((ids) => ids.length === 3), pairs = fresh.filter((ids) => ids.length === 2);
+    const from = triples.length && (rand() < 0.2 || !pairs.length) ? triples : pairs;
+    if (from.length) return from[Math.floor(rand() * from.length)];
+    if (pool.length) return pool[Math.floor(rand() * pool.length)];
+  }
   const pick = (list, not = []) => {
     const pool = list.filter((x) => !not.includes(x));
     return pool[Math.floor(rand() * pool.length)];
@@ -295,6 +308,41 @@ export const GOOD_COMBOS = [
   ["palindrome", "antiKing"], ["quadruple", "antiKnight"], ["evenOdd", "killer"], ["xv", "nonConsecutive"],
   ["thermo", "kropki"], ["killer", "thermo"], ["arrow", "renban"], ["diagonal", "antiKnight"],
 ];
+
+/** Every pair of variants that can be combined (prebuilt in the dataset). */
+export const ALL_PAIRS = (() => {
+  const out = [];
+  for (let i = 0; i < VARIANTS.length; i++) for (let j = i + 1; j < VARIANTS.length; j++) {
+    const ids = [VARIANTS[i].id, VARIANTS[j].id];
+    if (canCombine(ids)) out.push(ids);
+  }
+  return out;
+})();
+
+/**
+ * A fixed set of three-variant mixes that are also prebuilt (there are ~785 possible, too many to
+ * build them all). Chosen with a fixed seed, in the same shapes Surprise uses: two clue types + a
+ * grid rule, or one clue type + two grid rules. Every clue type appears in several.
+ */
+export const BANK_TRIPLES = (() => {
+  let s = 20261018;
+  const rand = () => ((s = (s * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const pick = (list, not = []) => { const pool = list.filter((x) => !not.includes(x)); return pool[Math.floor(rand() * pool.length)]; };
+  const out = [], seen = new Set();
+  for (let round = 0; out.length < 48 && round < 2000; round++) {
+    const c1 = CLUE_VARIANTS[round % CLUE_VARIANTS.length];
+    let ids;
+    if (rand() < 0.6) { const c2 = pick(CLUE_VARIANTS, [c1]); ids = [c1, c2, pick(GRID_RULE_VARIANTS)]; }
+    else { const r1 = pick(GRID_RULE_VARIANTS); ids = [c1, r1, pick(GRID_RULE_VARIANTS, [r1])]; }
+    const key = comboKey(ids);
+    if (!canCombine(ids) || seen.has(key)) continue;
+    seen.add(key); out.push(ids);
+  }
+  return out;
+})();
+
+/** All mixes in the prebuilt dataset. */
+export const BANK_COMBOS = [...ALL_PAIRS, ...BANK_TRIPLES];
 
 /** Does a complete grid satisfy every constraint of the model? */
 export function satisfies(cm, values) {
