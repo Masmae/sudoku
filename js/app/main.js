@@ -492,8 +492,8 @@ function mixCard() {
         // Avoid the current selection and the last 40 surprises.
         const recent = store.load("surpriseRecent", []);
         const avoid = new Set([...recent, ...(chosen.length ? [comboKey(chosen)] : [])]);
-        // Only mixes with ready-made Easy–Hard puzzles, so starting one is instant.
-        const ready = (ids) => [1, 2, 3].every((lvl) => app.lib.stockCount(Library.variantKey(ids, lvl)) > 0);
+        // Only mixes with ready-made Hard and Expert puzzles (the levels that get played), so starting one is instant.
+        const ready = (ids) => [3, 4].every((lvl) => app.lib.stockCount(Library.variantKey(ids, lvl)) > 0);
         const c = surpriseCombo(Math.random, avoid, ready);
         store.save("surpriseRecent", [comboKey(c), ...recent].slice(0, 40));
         chosen.splice(0, chosen.length, ...c); draw();

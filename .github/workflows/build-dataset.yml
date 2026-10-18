@@ -19,7 +19,7 @@ permissions:
 
 concurrency:
   group: build-dataset
-  cancel-in-progress: false
+  cancel-in-progress: true      # a newer run (new engine/tools) replaces a running one; progress is saved every 30 min
 
 jobs:
   build:
@@ -32,8 +32,25 @@ jobs:
           node-version: 22
       - name: Re-verify existing puzzles
         run: node tools/verify-variant-bank.mjs
-      - name: Build missing puzzles (time-limited)
-        run: node tools/build-variant-bank.mjs --workers 4 --total-minutes 320 --minutes-per-key 3
+      - name: Build missing puzzles (time-limited, saved to the repo every 30 minutes)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Publish progress every 30 minutes, so a cancelled or replaced run loses at most that.
+          save() {
+            git add data/variant-bank.json
+            git diff --cached --quiet && return 0
+            git commit -q -m "Update puzzle dataset (in progress)"
+            for i in 1 2 3; do git pull --rebase -q origin main && git push -q && return 0; sleep 5; done
+            echo "couldn't push progress; will try again later"
+          }
+          node tools/build-variant-bank.mjs --workers 4 --total-minutes 320 --minutes-per-key 3 &
+          pid=$!
+          while kill -0 $pid 2>/dev/null; do
+            for i in $(seq 180); do kill -0 $pid 2>/dev/null || break; sleep 10; done
+            kill -0 $pid 2>/dev/null && save
+          done
+          wait $pid
       - name: Verify again
         run: node tools/verify-variant-bank.mjs
       - name: Commit dataset
