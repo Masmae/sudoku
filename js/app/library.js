@@ -1,5 +1,5 @@
 import * as store from "./storage.js";
-import { randomTransform, transformDrill, transformPuzzle, comboKey } from "../core/index.js";
+import { randomTransform, transformDrill, transformPuzzle, comboKey, seededRandom } from "../core/index.js";
 
 // Every (variant or mix, level) has a stock of ready puzzles: the ones shipped in
 // data/variant-bank.json plus ones generated on this device. Using one queues exactly
@@ -17,7 +17,7 @@ export class Library {
     this.extraDrills = store.load("drills", []);
     this.pending = new Map();
     this.nextId = 1;
-    const listen = (w) => (e) => {
+    this.listen = (w) => (e) => {
       const p = this.pending.get(e.data.id);
       if (!p) return;
       this.pending.delete(e.data.id);
@@ -25,10 +25,8 @@ export class Library {
     };
     // Foreground worker for things you're waiting on; a second one refills the
     // ready-puzzle pool in the background so it never delays the foreground.
-    this.worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
-    this.worker.onmessage = listen(this.worker);
-    this.bgWorker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
-    this.bgWorker.onmessage = listen(this.bgWorker);
+    this.worker = this.spawn("worker");
+    this.bgWorker = this.spawn("bgWorker");
     this.variantBank = [];
     this.pool = store.load("pool", {});          // key -> [puzzle, ...]
     this.poolKeys = store.load("poolKeys", []);  // recently used keys, newest first
@@ -60,10 +58,57 @@ export class Library {
   run(type, args, worker = this.worker) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { resolve, reject, worker });
       worker.postMessage({ id, type, args });
     });
   }
+
+  /** Stops whatever the foreground worker is doing (a puzzle being made); those requests resolve to null. */
+  cancelForeground() {
+    this.epoch = (this.epoch ?? 0) + 1;
+    this.worker.terminate();
+    for (const [id, p] of this.pending) if (p.worker === this.worker) { this.pending.delete(id); p.resolve(null); }
+    this.worker = this.spawn("worker");
+  }
+
+  /**
+   * Starts a worker. If it fails to load (a file didn't arrive), whatever was waiting on it
+   * fails with a message instead of hanging, and a fresh worker takes its place.
+   */
+  spawn(slot) {
+    const w = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+    w.onmessage = this.listen(w);
+    w.onerror = () => {
+      if (this[slot] !== w) return;
+      w.terminate();
+      this.failures = (this.failures ?? 0) + 1;
+      for (const [id, p] of this.pending) if (p.worker === w) { this.pending.delete(id); p.reject(new Error("the puzzle engine didn't load. Check your connection and try again")); }
+      if (this.failures <= 5) this[slot] = this.spawn(slot);
+    };
+    return w;
+  }
+
+  /**
+   * The daily puzzle: the same one for everyone on a given date ("2026-11-13"), Hard or above.
+   * A bundled puzzle picked by the date, shown in a disguise that is also fixed by the date.
+   */
+  async daily(date) {
+    const day = Math.floor(Date.parse(date + "T00:00:00Z") / 86400000);
+    const level = 3 + (((day % 3) + 3) % 3);              // Hard, Expert, Master in turn
+    const list = this.bundled.filter((p) => p.difficulty === level);
+    if (!list.length) return null;
+    const rand = seededRandom(day * 2654435761);
+    const epoch = this.epoch;
+    for (let tries = 0; tries < 6 && epoch === this.epoch; tries++) {
+      const pick = transformPuzzle(list[Math.floor(rand() * list.length)], randomTransform(rand));
+      const g = await this.run("grade", { puzzle: pick.puzzle });
+      if (g && g.difficulty === level) return { ...g, daily: date };
+    }
+    return null;
+  }
+
+  /** Checks a variant puzzle that came from a shared link (unique solution, solvable with hints). */
+  verifyVariant(puzzle) { return this.run("verifyVariant", { puzzle }); }
 
   // ---------------------------------------------------------------- ready-puzzle pool
 
@@ -163,9 +208,11 @@ export class Library {
   /** Next puzzle: an unplayed bundled one (re-verified), else generated on the spot. */
   async next(d) {
     const key = Library.classicKey(d);
+    const epoch = this.epoch;
     for (const p of this.bundled) {
       if (p.difficulty !== d || this.played.has(p.puzzle)) continue;
       const g = await this.run("grade", { puzzle: p.puzzle });
+      if (epoch !== this.epoch) return null;   // cancelled
       if (g && g.difficulty === d) return g;
     }
     const ready = this.pool[key]?.shift();

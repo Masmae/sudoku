@@ -29,10 +29,68 @@ export class Game {
     this.shake = null;     // cell to shake on next render
     this.pulse = null;     // cells to pulse on next render
     this.autoRemoveNotes = true;
+    // Corner marks ("this digit goes somewhere here"), kept apart from the candidate notes.
+    this.corner = saved?.corner?.length === 81 ? saved.corner.slice() : new Array(81).fill(0);
+    this.noteKind = "grid";      // which kind the Notes tool writes: "grid" (candidates) or "corner"
+    // Colors: a tint per cell (0 = none) and per pencil mark (ck -> color), for following chains.
+    this.colors = saved?.colors?.length === 81 ? saved.colors.slice() : new Array(81).fill(0);
+    this.candColors = { ...(saved?.candColors ?? {}) };
+    this.colorMode = false;
+    this.colorPick = 1;
+    this.colorTarget = "cells";  // "cells" or "notes"
+    this.multi = new Set();      // several cells selected at once (drag, or shift-click)
+    this.pop = null;             // cell whose digit pops in on the next render
+    // Every change to a cell's digit, with the clock time, for the review after solving.
+    this.moves = Array.isArray(saved?.moves) ? saved.moves.slice() : [];
+    this.lastValues = this.values.slice();
+    this.assisted = false;
+    this.daily = saved?.daily ?? puzzle.daily ?? null;
   }
 
+  /** Records digit changes since the last call (call after every move). */
+  sync() {
+    for (let c = 0; c < 81; c++) {
+      if (this.values[c] === this.lastValues[c]) continue;
+      const m = { t: this.elapsed, c, d: this.values[c] };
+      if (this.assisted) m.a = 1;
+      this.moves.push(m);
+    }
+    if (this.moves.length > 3000) this.moves.splice(0, this.moves.length - 3000);
+    this.lastValues = this.values.slice();
+    this.assisted = false;
+  }
+
+  /** The cells an action applies to: the multi-selection, or just the selected cell. */
+  targets() { return this.multi.size > 1 ? [...this.multi] : this.selected === null ? [] : [this.selected]; }
+  extendSelection(c) {
+    if (!this.multi.size && this.selected !== null) this.multi.add(this.selected);
+    this.multi.add(c);
+    this.selected = c;
+  }
+  snapshot() { return { values: this.values.slice(), notes: this.notes.slice(), corner: this.corner.slice(), colors: this.colors.slice(), candColors: { ...this.candColors } }; }
+  restore(s) { this.values = s.values; this.notes = s.notes; this.corner = s.corner ?? this.corner; this.colors = s.colors ?? this.colors; this.candColors = s.candColors ?? this.candColors; }
+
+  // ---- Colors ----
+  paint(cells, color) {
+    const list = cells.filter((c) => c !== null);
+    if (!list.length) return;
+    this.checkpoint();
+    const allSame = list.every((c) => this.colors[c] === color);
+    for (const c of list) this.colors[c] = allSame ? 0 : color;
+  }
+  paintNote(d) {
+    const list = this.targets().filter((c) => !this.values[c] && ((this.notes[c] | this.corner[c]) & bit(d)));
+    if (!list.length) return;
+    this.checkpoint();
+    const allSame = list.every((c) => this.candColors[ck(c, d)] === this.colorPick);
+    for (const c of list) { if (allSame) delete this.candColors[ck(c, d)]; else this.candColors[ck(c, d)] = this.colorPick; }
+  }
+  get hasColors() { return this.colors.some((x) => x) || Object.keys(this.candColors).length > 0; }
+  clearColors() { if (!this.hasColors) return; this.checkpoint(); this.colors = new Array(81).fill(0); this.candColors = {}; }
+
   toJSON() {
-    return { puzzle: this.puzzle, values: this.values, notes: this.notes, elapsed: this.elapsed, mistakes: this.mistakes, hintsUsed: this.hintsUsed };
+    return { puzzle: this.puzzle, values: this.values, notes: this.notes, elapsed: this.elapsed, mistakes: this.mistakes, hintsUsed: this.hintsUsed,
+      corner: this.corner, colors: this.colors, candColors: this.candColors, moves: this.moves, daily: this.daily };
   }
   static fromJSON(j) {
     if (!j || !j.puzzle || !parsePuzzle(j.puzzle.puzzle) || !parsePuzzle(j.puzzle.solution)) return null;
@@ -133,6 +191,7 @@ export class Game {
   // ---- Number lock ----
   toggleLock() {
     this.lockMode = !this.lockMode;
+    this.multi.clear();
     if (this.lockMode && !this.lockedDigit && this.selected !== null && this.values[this.selected]) this.lockedDigit = this.values[this.selected];
     if (this.lockMode) this.selected = null;
     else this.lockedDigit = null;
@@ -162,7 +221,8 @@ export class Game {
 
   /** Board tap: in lock mode with a digit chosen, applies it to the tapped cell. */
   tapCell(c) {
-    if (!this.lockMode) { this.selected = this.selected === c ? null : c; return; }
+    if (this.colorMode && this.colorTarget === "cells") { this.multi.clear(); this.selected = c; this.paint([c], this.colorPick); return; }
+    if (!this.lockMode) { const only = this.multi.size <= 1; this.multi.clear(); this.selected = this.selected === c && only ? null : c; return; }
     const v = this.values[c];
     // Tapping a filled cell switches the lock to its digit (or locks it, if none is chosen yet).
     if (v && v !== this.lockedDigit) { this.lockedDigit = v; return; }
@@ -203,56 +263,62 @@ export class Game {
   }
 
   fillCell(p) {
+    this.assisted = true;
     this.values[p.cell] = p.digit;
-    this.notes[p.cell] = 0;
-    for (const q of this.noteMates(p.cell)) this.notes[q] &= ~bit(p.digit);
+    this.notes[p.cell] = 0; this.corner[p.cell] = 0;
+    for (const q of this.noteMates(p.cell)) { this.notes[q] &= ~bit(p.digit); this.corner[q] &= ~bit(p.digit); }
     this.selected = p.cell;
     this.pulseAround(p.cell);
   }
 
   checkpoint() {
-    this.undoStack.push({ values: this.values.slice(), notes: this.notes.slice() });
+    this.undoStack.push(this.snapshot());
     if (this.undoStack.length > 500) this.undoStack.shift();
     this.redoStack = [];
     this.clearHint();
   }
 
   input(d) {
-    const c = this.selected;
-    if (c === null || this.isGiven(c) || this.isSolved) return;
-    if (this.notesMode) {
-      if (this.values[c]) return;
+    if (this.isSolved) return;
+    if (this.colorMode && this.colorTarget === "notes") { this.paintNote(d); return; }
+    const several = this.multi.size > 1;
+    // Notes mode, or several cells selected: the digit goes in as a pencil mark.
+    if (this.notesMode || several) {
+      const arr = this.notesMode && this.noteKind === "corner" ? this.corner : this.notes;
+      const list = this.targets().filter((c) => !this.isGiven(c) && !this.values[c]);
+      if (!list.length) return;
       this.checkpoint();
-      this.notes[c] ^= bit(d);
-    } else {
-      if (this.values[c] === d) return;
-      this.checkpoint();
-      this.values[c] = d;
-      this.notes[c] = 0;
-      if (d !== this.solution[c]) { this.mistakes++; this.shake = c; }
-      else {
-        if (this.autoRemoveNotes) for (const p of this.noteMates(c)) this.notes[p] &= ~bit(d);
-        this.pulseAround(c);
-      }
+      const all = list.every((c) => arr[c] & bit(d));
+      for (const c of list) { if (all) { arr[c] &= ~bit(d); delete this.candColors[ck(c, d)]; } else arr[c] |= bit(d); }
+      return;
     }
+    const c = this.selected;
+    if (c === null || this.isGiven(c) || this.values[c] === d) return;
+    this.checkpoint();
+    this.values[c] = d;
+    this.notes[c] = 0; this.corner[c] = 0;
+    this.pop = c;
+    if (d !== this.solution[c]) { this.mistakes++; this.shake = c; }
+    else if (this.autoRemoveNotes) for (const p of this.noteMates(c)) { this.notes[p] &= ~bit(d); this.corner[p] &= ~bit(d); }
+    this.pulseAround(c);
   }
 
   erase() {
-    const c = this.selected;
-    if (c === null || this.isGiven(c) || (!this.values[c] && !this.notes[c])) return;
+    const list = this.targets().filter((c) => !this.isGiven(c) && (this.values[c] || this.notes[c] || this.corner[c]));
+    if (!list.length) return;
     this.checkpoint();
-    this.values[c] = 0; this.notes[c] = 0;
+    for (const c of list) { this.values[c] = 0; this.notes[c] = 0; this.corner[c] = 0; }
   }
 
   undo() {
     const s = this.undoStack.pop(); if (!s) return;
-    this.redoStack.push({ values: this.values.slice(), notes: this.notes.slice() });
-    this.values = s.values; this.notes = s.notes; this.clearHint();
+    this.redoStack.push(this.snapshot());
+    this.restore(s); this.clearHint();
   }
   redo() {
     const s = this.redoStack.pop(); if (!s) return;
-    this.undoStack.push({ values: this.values.slice(), notes: this.notes.slice() });
-    this.values = s.values; this.notes = s.notes; this.clearHint();
+    this.undoStack.push(this.snapshot());
+    this.restore(s); this.clearHint();
   }
 
   /** True when every empty cell has pencil marks (so the button offers to clear them). */
@@ -277,6 +343,7 @@ export class Game {
   clearAllNotes() {
     this.checkpoint();
     this.notes = new Array(81).fill(0);
+    this.corner = new Array(81).fill(0);
   }
 
   /** Fill notes button: fills every cell's notes, or clears them if they're already filled. */
@@ -284,10 +351,11 @@ export class Game {
     if (this.notesFilled) this.clearAllNotes(); else this.fillAllNotes();
   }
 
+  /** A row, column or box that just became full gets a sweep (full, not necessarily right: it gives nothing away). */
   pulseAround(c) {
     const cells = new Set();
-    for (const u of UNITS_OF[c]) if (UNITS[u].every((x) => this.values[x] === this.solution[x])) UNITS[u].forEach((x) => cells.add(x));
-    if (cells.size) this.pulse = [...cells];
+    for (const u of UNITS_OF[c]) if (UNITS[u].every((x) => this.values[x] !== 0)) UNITS[u].forEach((x) => cells.add(x));
+    if (cells.size) { this.pulse = [...cells]; this.pulseFrom = c; }
   }
 
   /** Each request goes one level deeper: 1 technique, 2 where, 3 the move. */
@@ -305,13 +373,14 @@ export class Game {
     const st = this.hint.step;
     const state = this.candidateState();
     this.checkpoint();
+    this.assisted = true;
     for (const e of st.eliminations) {
       if (this.values[e.cell]) continue;
       if (!this.notes[e.cell]) this.notes[e.cell] = state.cands[e.cell];
       this.notes[e.cell] &= ~bit(e.digit);
     }
     for (const p of st.placements) {
-      this.values[p.cell] = p.digit; this.notes[p.cell] = 0;
+      this.values[p.cell] = p.digit; this.notes[p.cell] = 0; this.corner[p.cell] = 0;
       if (this.autoRemoveNotes) for (const q of this.noteMates(p.cell)) this.notes[q] &= ~bit(p.digit);
       this.selected = p.cell;
       this.pulseAround(p.cell);
@@ -333,7 +402,8 @@ export class Game {
     const c = this.selected;
     if (c === null || this.values[c] === this.solution[c]) return;
     this.checkpoint();
-    this.values[c] = this.solution[c]; this.notes[c] = 0; this.hintsUsed++;
+    this.assisted = true;
+    this.values[c] = this.solution[c]; this.notes[c] = 0; this.corner[c] = 0; this.hintsUsed++;
     this.pulseAround(c);
   }
 }

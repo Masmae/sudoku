@@ -22,7 +22,7 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 export function svg(tag, attrs = {}, ...children) {
   const el = document.createElementNS(SVG_NS, tag);
   for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null) el.setAttribute(k, String(v));
-  for (const c of children.flat()) if (c) el.append(c);
+  for (const c of children.flat(Infinity)) if (c) el.append(c);
   return el;
 }
 
@@ -43,6 +43,9 @@ const PATHS = {
   lock: "M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z",
   wand: "m4 20 11-11M14 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1zM19 11l.7 1.3L21 13l-1.3.7L19 15l-.7-1.3L17 13l1.3-.7z",
   chevron: "m9 6 6 6-6 6",
+  drop: "M12 3.5s6 6.3 6 10.6a6 6 0 0 1-12 0C6 9.800 12 3.500 12 3.500z",
+  calendar: "M5 6h14v14H5zM5 10h14M9 4v4M15 4v4",
+  chart: "M5 20V10M12 20V4M19 20v-7",
   back: "m15 6-6 6 6 6",
 };
 export function icon(name) {

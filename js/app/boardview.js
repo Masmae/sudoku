@@ -28,13 +28,19 @@ const CELL = 100, PAD = 4, INNER = (CELL - 2 * PAD) / 3;
 const candPoint = (c, d) => [COL[c] * CELL + PAD + ((d - 1) % 3 + 0.5) * INNER, ROW[c] * CELL + PAD + (Math.floor((d - 1) / 3) + 0.5) * INNER];
 
 export class BoardView {
-  constructor({ onTap, label = "Sudoku board" }) {
+  constructor({ onTap, onDrag = null, label = "Sudoku board" }) {
     this.onTap = onTap;
+    this.onDrag = onDrag;     // (cell, isFirst): dragging across cells selects several
+    this.dragFrom = null; this.dragLast = null;
     this.cells = [];
     this.board = h("div", { class: "board", role: "grid", "aria-label": label, tabindex: "0" });
     for (let i = 0; i < 81; i++) {
       const el = h("div", { class: "cell", role: "gridcell", "data-i": i });
-      el.addEventListener("pointerdown", (e) => { e.preventDefault(); this.board.focus({ preventScroll: true }); this.onTap?.(i); });
+      el.addEventListener("pointerdown", (e) => {
+        e.preventDefault(); this.board.focus({ preventScroll: true });
+        this.onTap?.(i, e);
+        this.dragFrom = this.dragLast = i;
+      });
       this.cells.push(el);
       this.board.append(el);
     }
@@ -49,6 +55,21 @@ export class BoardView {
     this.frame = h("div", { class: "sel-frame", "aria-hidden": "true" });
     this.frame.style.display = "none";
     this.board.append(this.variantSvg, lines, this.links, this.frame);
+    if (this.onDrag) {
+      this.board.classList.add("draggable");
+      this.board.addEventListener("pointermove", (e) => {
+        if (this.dragFrom === null || (e.pointerType === "mouse" && !(e.buttons & 1))) return;
+        const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest?.(".cell");
+        if (!hit || !this.board.contains(hit)) return;
+        const i = Number(hit.dataset.i);
+        if (i === this.dragLast) return;
+        this.onDrag(i, this.dragLast === this.dragFrom ? this.dragFrom : null);
+        this.dragLast = i;
+      });
+      const end = () => { this.dragFrom = this.dragLast = null; };
+      this.board.addEventListener("pointerup", end);
+      this.board.addEventListener("pointercancel", end);
+    }
     this.outsideTop = h("div", { class: "outside top", "aria-hidden": "true" });
     this.outsideLeft = h("div", { class: "outside left", "aria-hidden": "true" });
     this.el = h("div", { class: "board-wrap" }, this.board, this.outsideTop, this.outsideLeft);
@@ -90,16 +111,31 @@ export class BoardView {
       else if (i === sel) bg = "selected";
       else if (m.extra?.has(i)) bg = m.extra.get(i);
       else if (m.digitMode ? doneBoxes.has(BOX[i]) : sel !== null && sees(sel, i)) bg = "related";
-      el.className = "cell" + (bg ? " " + bg : "");
+      el.className = "cell" + (bg ? " " + bg : "") + (m.colors?.[i] ? ` tint t${m.colors[i]}` : "") + (m.multi?.has(i) ? " multi" : "");
       el.replaceChildren();
       const r = ROW[i] + 1, c = COL[i] + 1;
       if (v) {
-        const cls = "v" + (m.given(i) ? " given" : "") + (wrong.has(i) ? " wrong" : "");
+        const cls = "v" + (m.given(i) ? " given" : "") + (wrong.has(i) ? " wrong" : "") + (m.pop === i ? " pop" : "");
         el.append(h("span", { class: cls }, String(v)));
         el.setAttribute("aria-label", `Row ${r}, column ${c}, ${m.given(i) ? "given" : "entered"} ${v}${wrong.has(i) ? ", incorrect" : ""}`);
       } else if (hl.ghost.has(i)) {
         el.append(h("span", { class: "v ghost" }, String(hl.ghost.get(i))));
         el.setAttribute("aria-label", `Row ${r}, column ${c}, hint: place ${hl.ghost.get(i)}`);
+      } else if (m.corner?.[i]) {
+        // Corner marks around the edge; the candidate notes (if any) as a row in the middle.
+        const mark = (d, extra) => {
+          const col = m.candColors?.[ck(i, d)];
+          return h("span", { class: [extra, col ? `c${col}` : "", m.highlightDigit === d ? "focus" : ""].filter(Boolean).join(" ") || null }, String(d));
+        };
+        const corners = [], centre = [];
+        for (let d = 1; d <= 9; d++) {
+          if (has(m.corner[i], d)) corners.push(d);
+          if (has(m.notes[i], d)) centre.push(d);
+        }
+        el.append(h("div", { class: "corners" }, corners.map((d, k) => mark(d, `p${k}`))));
+        if (centre.length) el.append(h("div", { class: "centre" + (centre.length > 5 ? " long" : "") },
+          centre.map((d) => mark(d, m.noteConflicts?.has(ck(i, d)) ? "conflict" : ""))));
+        el.setAttribute("aria-label", `Row ${r}, column ${c}, empty, corner marks ${corners.join(" ")}${centre.length ? `, notes ${centre.join(" ")}` : ""}`);
       } else if (m.notes[i]) {
         const grid = h("div", { class: "notes" });
         const list = [];
@@ -114,6 +150,8 @@ export class BoardView {
           if (!cls && m.noteConflicts?.has(k)) cls = "conflict";
           if (!cls && m.highlightDigit === d) cls = "focus";
           else if (cls === "conflict" && m.highlightDigit === d) cls = "conflict focus";
+          const col = m.candColors?.[k];
+          if (col) cls += ` c${col}`;
           grid.append(h("span", { class: cls.trim() || null }, String(d)));
         }
         el.append(grid);
@@ -134,11 +172,15 @@ export class BoardView {
       el.classList.remove("shake"); void el.offsetWidth; el.classList.add("shake");
     }
     if (m.pulse?.length) {
+      // A sweep: cells further from where it started light up a little later.
+      const from = m.pulseFrom ?? m.pulse[0], step = m.pulseStep ?? 28;
       for (const c of m.pulse) {
+        const delay = step * (m.wave ? ROW[c] + COL[c] : Math.max(Math.abs(ROW[c] - ROW[from]), Math.abs(COL[c] - COL[from])));
         const p = h("div", { class: "pulse" });
         p.style.left = `${(COL[c] * 100) / 9}%`; p.style.top = `${(ROW[c] * 100) / 9}%`;
+        p.style.animationDelay = `${delay}ms`;
         this.board.append(p);
-        setTimeout(() => p.remove(), 650);
+        setTimeout(() => p.remove(), 700 + delay);
       }
     }
   }
@@ -163,4 +205,9 @@ export class BoardView {
       this.links.append(p);
     }
   }
+}
+
+/** A tiny picture of a board: which cells are given, filled in, or still empty. */
+export function miniBoard(values, givens) {
+  return h("div", { class: "mini", "aria-hidden": "true" }, values.map((v, i) => h("i", { class: givens[i] ? "g" : v ? "f" : null })));
 }
