@@ -98,6 +98,8 @@ export class BoardView {
     const wrong = m.wrong ?? new Set();
     const sel = m.selected ?? null;
     const hd = m.highlightDigit ?? null;
+    // While a hint's pattern is on show, everything that isn't part of it steps back.
+    this.board.classList.toggle("hinting", hl.roles.size > 0 || hl.elims.size > 0);
     // Digit mode (number lock): grey out boxes that already contain the digit.
     const doneBoxes = new Set();
     if (m.digitMode && hd) for (let c = 0; c < 81; c++) if (m.values[c] === hd) doneBoxes.add(BOX[c]);
@@ -111,7 +113,7 @@ export class BoardView {
       else if (i === sel) bg = "selected";
       else if (m.extra?.has(i)) bg = m.extra.get(i);
       else if (m.digitMode ? doneBoxes.has(BOX[i]) : sel !== null && sees(sel, i)) bg = "related";
-      el.className = "cell" + (bg ? " " + bg : "") + (m.colors?.[i] ? ` tint t${m.colors[i]}` : "") + (m.multi?.has(i) ? " multi" : "");
+      el.className = "cell" + (bg ? " " + bg : "") + (hl.cells.has(i) && hl.roles.size ? " hint-ring" : "") + (m.colors?.[i] ? ` tint t${m.colors[i]}` : "") + (m.multi?.has(i) ? " multi" : "");
       el.replaceChildren();
       const r = ROW[i] + 1, c = COL[i] + 1;
       if (v) {
@@ -192,7 +194,7 @@ export class BoardView {
     const defs = svg("defs", {}, svg("marker", { id: "arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 16, markerHeight: 16,
       orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" }, svg("path", { d: "M0,0 L10,5 L0,10 z", class: "arrowhead" })));
     this.links.append(defs);
-    const r = 16;
+    const r = 21;
     for (const l of hl.links) {
       const [ax0, ay0] = candPoint(l.from.cell, l.from.digit), [bx0, by0] = candPoint(l.to.cell, l.to.digit);
       const ux = bx0 - ax0, uy = by0 - ay0, ul = Math.max(1, Math.hypot(ux, uy));

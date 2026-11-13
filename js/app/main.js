@@ -385,6 +385,9 @@ function viewGame() {
       g.multi.size > 1 && !g.colorMode ? h("p", { class: "lock-hint" }, `${g.multi.size} cells selected: digits go in as notes.`) : null,
       g.colorMode ? palette() : null,
       g.notesMode && !g.colorMode ? seg("Kind of note", [["grid", "Candidates"], ["corner", "Corner marks"]], g.noteKind, (v) => { g.noteKind = v; update(); }) : null,
+      g.notesMode && !g.colorMode ? h("p", { class: "lock-hint quiet" }, g.noteKind === "corner"
+        ? "Corner marks: small digits in a cell's corners, for \"this digit must be in one of these cells\". They are yours alone: hints and warnings ignore them."
+        : "Candidates: the digits a cell could still be.") : null,
       tools(),
       keypad(),
       h("p", { class: "kbd-help" }, h("kbd", {}, "1–9"), " enter  ", h("kbd", {}, "⇧1–9"), " note  ", h("kbd", {}, "arrows"), " move  ",

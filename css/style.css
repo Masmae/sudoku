@@ -560,3 +560,13 @@ details summary { cursor: pointer; color: var(--accent); margin-top: 6px; }
 .palette .swatches { gap: 7px; }
 .palette .swatches .btn { padding: 5px 9px; }
 .tools { align-items: start; }
+
+/* Hints: the lines sit behind the big digits, and the pattern's candidates are large and clear */
+.links { z-index: 1; }
+.cell .v { position: relative; z-index: 2; }
+.links path { stroke-width: 3; opacity: .8; }
+.board.hinting .notes span:not(.key):not(.sec):not(.place):not(.struck) { opacity: .4; }
+.board.hinting .notes span:is(.key, .sec, .place, .struck) { position: relative; z-index: 3; transform: scale(1.45); font-weight: 700; border-radius: 28%; box-shadow: 0 0 0 1.5px var(--surface); }
+.board.hinting .notes span.struck:not(.key):not(.sec):not(.place) { background: var(--elim); color: #fff; box-shadow: 0 0 0 1.5px var(--surface); text-decoration-thickness: 1.5px; }
+.cell.hint-ring { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--key) 75%, transparent); }
+.lock-hint.quiet { color: var(--text-2); }
