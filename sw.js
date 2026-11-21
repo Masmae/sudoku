@@ -1,7 +1,7 @@
 // Offline support. Network-first for the app's own files (so updates arrive as soon
 // as you're online), falling back to the cached copy when offline. Never touches
 // other origins.
-const CACHE = "sudoku-trainer-v4";
+const CACHE = "sudoku-trainer-v5";
 const FILES = [
   "./", "index.html", "manifest.webmanifest", "icon.svg",
   "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png",

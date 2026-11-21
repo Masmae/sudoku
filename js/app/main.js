@@ -14,7 +14,7 @@ import {
 
 // ---------------- App state ----------------
 const DEFAULT_SETTINGS = { showMistakes: true, autoRemoveNotes: true, showRemaining: true, autocomplete: true, noteWarnings: true, theme: "system",
-  zen: false, accent: "blue", lastLevel: 3, lastVariantLevel: 3 };
+  zen: false, accent: "blue", lastLevel: 3, lastVariantLevel: 3, startOn: "games" };
 const ACCENTS = [["blue", "Blue"], ["teal", "Teal"], ["violet", "Violet"], ["amber", "Amber"], ["rose", "Rose"]];
 const COLOR_NAMES = ["", "Yellow", "Green", "Blue", "Pink", "Orange", "Purple"];
 const app = {
@@ -196,8 +196,9 @@ function startGame(p) {
 function route() {
   cleanup(); cleanup = () => {};
   root.replaceChildren();
-  const [, page, arg, arg2] = (location.hash || "#/play").split("/");
+  const [, page, arg, arg2] = (location.hash || "#/games").split("/");
   document.body.classList.toggle("in-game", page === "game");
+  document.body.classList.toggle("hub", page === "games");
   document.querySelectorAll(".tabbar a").forEach((a) => {
     const tab = a.dataset.tab;
     const active = tab === page || (tab === "play" && ["game", "path", "variants", "daily", "review", "p"].includes(page)) || (tab === "learn" && page === "drill");
@@ -210,6 +211,7 @@ function route() {
     case "drill": return T[arg] ? viewDrill(arg) : (location.hash = "#/learn");
     case "settings": return viewSettings();
     case "variants": return viewVariants();
+    case "games": return viewGames();
     case "stats": return viewStats();
     case "daily": return viewDaily();
     case "review": return app.game?.isSolved ? viewReview() : (location.hash = "#/play");
@@ -217,6 +219,59 @@ function route() {
     case "path": return app.game ? viewPath(arg === "start" ? "start" : "current") : (location.hash = "#/play");
     default: return viewPlay();
   }
+}
+
+// ---------------- Games (the front door) ----------------
+// Sudoku is one of the games; the others open their own apps. Links you add yourself (for
+// private apps) are kept only on this device, so their addresses never appear in this public app.
+const BUILT_IN = [
+  { name: "Paper of the Day", sub: "One paper a day, plus lessons", url: "https://masmae.github.io/paperoftheday/", mark: "P" },
+  { name: "Silver", sub: "The card game, 2 vs 2", url: "https://masmae.github.io/silver/", mark: "S" },
+];
+function cleanLink(name, url) {
+  const n = String(name ?? "").replace(/[\u0000-\u001f<>]/g, "").trim().slice(0, 24);
+  let u;
+  try { u = new URL(String(url ?? "").trim()); } catch { return null; }
+  if (u.protocol !== "https:" || !n) return null;
+  return { name: n, url: u.href };
+}
+function viewGames() {
+  const g = app.game && !app.game.isSolved ? app.game : null;
+  let links = store.load("links", []).map((l) => cleanLink(l?.name, l?.url)).filter(Boolean).slice(0, 12);
+  let editing = false;
+  const mine = h("div", { class: "games" });
+  const tile = (name, sub, mark, attrs, extra = null) => h(attrs.href ? "a" : "div", { class: "game-tile", ...attrs },
+    h("span", { class: "game-mark", "aria-hidden": "true" }, mark), h("span", { class: "grow" }, h("b", {}, name), sub ? h("span", { class: "sub" }, sub) : null), extra);
+  const nameIn = h("input", { class: "field", maxlength: "24", placeholder: "Name, e.g. Cryptic", "aria-label": "Game name" });
+  const urlIn = h("input", { class: "field", type: "url", inputmode: "url", autocapitalize: "off", spellcheck: "false", placeholder: "https://…", "aria-label": "Game link" });
+  const note = h("p", { class: "small muted", role: "status" });
+  const form = h("div", { class: "card add-game", hidden: true },
+    h("p", { class: "small muted" }, "Add a link to another of your games, for example a private one. It's saved on this device only."),
+    nameIn, urlIn, note,
+    h("div", { class: "btn-row" }, h("span", { class: "spacer" }),
+      h("button", { class: "btn", onclick: () => { form.hidden = true; } }, "Cancel"),
+      h("button", { class: "btn primary", onclick: () => {
+        const l = cleanLink(nameIn.value, urlIn.value);
+        if (!l) { note.textContent = "Give it a name and a link that starts with https://"; return; }
+        links = [...links.filter((x) => x.url !== l.url), l];
+        store.save("links", links);
+        nameIn.value = urlIn.value = ""; note.textContent = ""; form.hidden = true; draw();
+      } }, "Add")));
+  const draw = () => fill(mine,
+    tile("Sudoku", g ? `Continue: ${puzzleTitle(g.puzzle)}` : "Puzzles, variants and techniques", "9", { href: "#/play" }),
+    BUILT_IN.map((b) => tile(b.name, b.sub, b.mark, { href: b.url })),
+    links.map((l) => (editing
+      ? tile(l.name, new URL(l.url).hostname, l.name[0].toUpperCase(), {}, h("button", { class: "btn small", onclick: () => { links = links.filter((x) => x !== l); store.save("links", links); draw(); } }, "Remove"))
+      : tile(l.name, "Your link", l.name[0].toUpperCase(), { href: l.url }))));
+  draw();
+  mount(
+    h("div", { class: "page-title" }, h("h1", {}, "Games")),
+    mine,
+    h("div", { class: "btn-row" },
+      h("button", { class: "btn", onclick: () => { form.hidden = false; nameIn.focus(); } }, "+ Add a game link"),
+      h("button", { class: "btn", onclick: (e) => { editing = !editing; e.target.textContent = editing ? "Done" : "Edit links"; draw(); } }, "Edit links")),
+    form,
+    h("p", { class: "footnote" }, "Sudoku opens as it always has. To skip this screen, choose \"Open on: Sudoku\" in Sudoku's settings."));
 }
 
 // ---------------- Play home ----------------
@@ -234,6 +289,7 @@ function viewPlay() {
   const now = today(), done = app.stats.daily[now], run = streak(app.stats.daily);
   const last = DIFFICULTIES.find((d) => d.id === app.settings.lastLevel) ?? DIFFICULTIES[2];
   mount(
+    h("a", { class: "back", href: "#/games" }, icon("back"), "Games"),
     h("div", { class: "page-title" }, h("h1", {}, "Sudoku")),
     g && !g.isSolved ? h("div", { class: "section" }, h("a", { class: "card continue", href: "#/game" },
       miniBoard(g.values, g.givens),
@@ -977,6 +1033,10 @@ function viewSettings() {
   const drawAccent = () => accent.replaceChildren(...ACCENTS.map(([id, name]) =>
     h("button", { class: `swatch accent-${id}`, "aria-label": name, "aria-pressed": String(app.settings.accent === id), onclick: () => { app.settings.accent = id; saveSettings(); drawAccent(); } })));
   drawAccent();
+  const startOn = h("div", { class: "segmented", role: "group", "aria-label": "Open the app on" });
+  const drawStart = () => startOn.replaceChildren(...[["games", "Games"], ["sudoku", "Sudoku"]].map(([v, l]) =>
+    h("button", { "aria-pressed": String(app.settings.startOn === v), onclick: () => { app.settings.startOn = v; saveSettings(); drawStart(); } }, l)));
+  drawStart();
   const mastered = TECHNIQUES.filter((t) => correct(t.id) >= 3).length;
   const classic = Object.values(app.stats.solved).reduce((a, b) => a + b, 0), variants = Object.values(app.stats.variants ?? {}).reduce((a, b) => a + b, 0);
   const tile = (value, label) => h("div", { class: "tile" }, h("b", {}, String(value)), h("span", {}, label));
@@ -991,7 +1051,8 @@ function viewSettings() {
       toggle("zen", "Zen mode", "Hides the timer and the mistake count while you play."))),
     h("div", { class: "section" }, h("h2", {}, "Look"), h("div", { class: "list" },
       h("div", { class: "toggle-row" }, h("span", {}, "Appearance"), theme),
-      h("div", { class: "toggle-row" }, h("span", {}, "Accent color"), accent))),
+      h("div", { class: "toggle-row" }, h("span", {}, "Accent color"), accent),
+      h("div", { class: "toggle-row" }, h("span", {}, "Open on"), startOn))),
     h("div", { class: "section" }, h("h2", {}, "Progress"),
       h("div", { class: "tiles four" }, tile(classic, "classic solved"), tile(variants, "variants solved"), tile(`${mastered}/${TECHNIQUES.length}`, "techniques mastered"), tile(streak(app.stats.daily), "day streak")),
       h("a", { class: "btn block", href: "#/stats" }, "See all stats")),
@@ -1152,6 +1213,9 @@ applyTheme();
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }
+// Opening the app lands on the Games screen (or straight on Sudoku, if Settings says so). The
+// installed app's start address is "#/play", so that counts as "just opened" too.
+if (["", "#/play", "#/games"].includes(location.hash)) history.replaceState(null, "", app.settings.startOn === "sudoku" ? "#/play" : "#/games");
 window.addEventListener("hashchange", route);
 app.lib.load().then(route).catch((e) => {
   root.replaceChildren(h("div", { class: "card" }, h("h2", {}, "Couldn't start"), h("p", {}, e.message),
