@@ -1,7 +1,7 @@
 // Cryptic: one clue a day, hints that teach how the clue works, and practice by clue type.
 // It is one of the games behind the Sudoku app's Games screen (served from its cryptic/ folder).
-// Everything is kept on this device; the clues are data files (data/clues.json, data/generated.json).
-import { TYPES, parseClue, problems, dailyIndex } from "./clues.js";
+// Progress is kept on this device; the clues are real newspaper clues in data/clues.json.
+import { TYPES, dailyIndex } from "./clues.js";
 
 const app = document.getElementById("app");
 const SAVE = "cryptic.v1";
@@ -31,15 +31,23 @@ const addDays = (k, n) => { const d = parseDate(k); d.setDate(d.getDate() + n); 
 const niceDate = (k) => parseDate(k).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
 
 // ---------------------------------------------------------------- clues
-let CLUES = [];
-const byId = (id) => CLUES.find((c) => c.id === id);
+let CLUES = [], CREDIT = "";
+const byId = (id) => CLUES.find((c) => String(c.id) === String(id));
 
 async function loadClues() {
-  const get = async (f) => { try { const r = await fetch(f, { cache: "no-cache" }); return r.ok ? (await r.json()).clues ?? [] : []; } catch { return []; } };
-  const [mine, made] = await Promise.all([get("data/clues.json"), get("data/generated.json")]);
-  const seen = new Set();
-  // Machine-written clues are checked again here: only ones whose wordplay really works are shown.
-  CLUES = [...mine, ...made].filter((c) => problems(c).length === 0 && !seen.has(c.answer) && seen.add(c.answer));
+  try {
+    const r = await fetch("data/clues.json", { cache: "no-cache" });
+    const j = r.ok ? await r.json() : {};
+    CLUES = Array.isArray(j.clues) ? j.clues : [];
+    CREDIT = typeof j.source === "string" ? j.source : "";
+    // Forget progress on clues that are no longer in the set (the first version had its own clues).
+    if (CLUES.length) {
+      const ids = new Set(CLUES.map((c) => String(c.id)));
+      for (const k of ["solved", "work"]) for (const id of Object.keys(store[k])) if (!ids.has(id)) delete store[k][id];
+      for (const [d, id] of Object.entries(store.daily)) if (!ids.has(String(id))) delete store.daily[d];
+      persist();
+    }
+  } catch { CLUES = []; }
 }
 
 /** The clue for a date. Fixed the first time that day is opened, so it stays put when clues are added. */
@@ -64,19 +72,23 @@ function streak() {
 
 /** The clue text as elements, with the parts a hint has uncovered switched on. */
 function clueEl(c, show = {}) {
-  const { text, spans } = parseClue(c.clue);
+  const spans = [{ kind: "d", at: c.d }, ...(c.i ?? []).map((at) => ({ kind: "i", at })), ...(c.f ?? []).map((at) => ({ kind: "f", at }))].sort((x, y) => x.at[0] - y.at[0]);
   const out = [];
   let at = 0;
   for (const s of spans) {
-    if (s.start > at) out.push(text.slice(at, s.start));
-    out.push(h("span", { class: s.kind + (show[s.kind] ? " on" : "") }, text.slice(s.start, s.end)));
-    at = s.end;
+    if (s.at[0] < at) continue;
+    if (s.at[0] > at) out.push(c.clue.slice(at, s.at[0]));
+    out.push(h("span", { class: s.kind + (show[s.kind] ? " on" : "") }, c.clue.slice(s.at[0], s.at[1])));
+    at = s.at[1];
   }
-  if (at < text.length) out.push(text.slice(at));
+  if (at < c.clue.length) out.push(c.clue.slice(at));
   return h("p", { class: "clue" }, out, " ", h("span", { class: "len" }, `(${c.answer.length})`));
 }
+/** Where the clue was published, with a link to the blog post that discusses that puzzle. */
+const creditEl = (c) => h("p", { class: "small muted" }, c.from ?? "", c.date ? `, ${c.date}` : "", ". ",
+  c.url ? h("a", { href: c.url, target: "_blank", rel: "noopener noreferrer" }, `Read the solvers' notes on ${c.blog ?? "the blog"} ↗`) : null);
 const legend = () => h("div", { class: "legend" },
-  h("span", {}, h("i", { class: "d" }), "definition"), h("span", {}, h("i", { class: "i" }), "indicator"), h("span", {}, h("i", { class: "f" }), "fodder"));
+  h("span", {}, h("i", { class: "d" }), "definition"), h("span", {}, h("i", { class: "i" }), "indicator"), h("span", {}, h("i", { class: "f" }), "pieces"));
 const scoreText = (s) => (s.gaveUp ? "Answer shown" : s.hints === 0 ? "Solved with no hints" : `Solved with ${s.hints} hint${s.hints === 1 ? "" : "s"}`);
 
 // ---------------------------------------------------------------- home
@@ -113,44 +125,44 @@ function viewHome() {
         h("div", { class: "grow" }, h("div", { class: "title" }, niceDate(d)), h("div", { class: "sub" }, s ? pc.answer : pc ? `${pc.answer.length} letters` : "")),
         h("span", { class: "end" + (s && !s.gaveUp ? " done" : "") }, s ? scoreText(s) : "Not solved"));
     })),
-    h("p", { class: "small muted" }, `${CLUES.length} clues, all written for this app and checked by machine. Past days don't count for the streak.`),
+    h("p", { class: "small muted" }, `${CLUES.length.toLocaleString()} real newspaper clues. Past days don't count for the streak.`),
+    CREDIT ? h("p", { class: "small muted" }, CREDIT) : null,
   );
 }
 
 // ---------------------------------------------------------------- learn
 const LESSONS = {
   anagram: "The answer's letters are in the clue, jumbled. An indicator word suggests movement, damage or change (mixed, broken, wild, out). The fodder is the word or words whose letters you rearrange, and it has exactly as many letters as the answer.",
-  hidden: "The answer is written out in the clue, running across the middle of a word or from the end of one word into the next. The indicator suggests being inside or being part of something.",
-  reversal: "Read a word backwards. The indicator suggests going back, returning or being turned over. Sometimes the word to reverse is in the clue; often you first find a synonym and reverse that.",
-  container: "One piece goes inside another. Find the two pieces (usually synonyms or abbreviations), and the indicator tells you which holds which: 'in', 'inside' and 'held by' put the first inside the second; 'holding', 'around' and 'eats' do the opposite.",
-  charade: "The answer is built from pieces set side by side, like the party game. Each piece is a synonym or abbreviation. There is often no indicator at all, just small joining words like 'and', 'with' or 'gets'.",
-  letters: "Pick particular letters from the fodder: first letters (starts, heads, leaders), last letters (ends, finally, tails), or every other letter (oddly, evenly, regularly).",
-  deletion: "Take a word and remove something: its first letter (headless, loses head), its last (endless, without tail), its middle (heartless), or a named letter. What's left is the answer.",
-  double: "Two definitions of the same word, side by side, with no wordplay. These clues are usually very short. If a two- or three-word clue makes no sense as wordplay, try this.",
-  homophone: "The answer sounds like another word. The indicator is about hearing or speaking (we hear, reportedly, they say, on the radio). Find the word that is described, then spell what it sounds like.",
+  hidden: "The answer is written out in the clue, running from the end of one word into the next, or across several. The indicator suggests being inside or being part of something.",
+  charade: "The answer is built from pieces set side by side, like the party game. Each piece is a synonym or a standard abbreviation (sailor = TAR, street = ST). There is usually no indicator, just small joining words.",
+  container: "One piece goes inside another. Find the pieces (synonyms or abbreviations), and the indicator tells you which holds which: 'in' and 'entering' put the first inside the second; 'holding', 'around' and 'eating' do the opposite.",
+  reversal: "A piece, or the whole thing, is read backwards. The indicator suggests going back, returning or being turned over (or going up, in a down clue). Usually you first find a synonym, then reverse it.",
+  letters: "Take every other letter of the words next to the indicator. 'Oddly' and 'evenly' say which ones to keep; 'regularly' leaves you to try both.",
 };
 function viewLearn(type) {
   const t = TYPES[type];
   if (!t) return (location.hash = "#/");
   const mine = CLUES.filter((c) => c.type === type);
-  const example = mine.find((c) => store.solved[c.id]) ?? mine[0];
-  const rest = mine.filter((c) => c !== example || store.solved[c.id]);
+  const done = mine.filter((c) => store.solved[c.id]);
+  const example = done.at(-1) ?? mine[0];
   const next = mine.find((c) => !store.solved[c.id] && c !== example) ?? mine.find((c) => !store.solved[c.id]);
+  const recent = done.sort((a, b) => store.solved[b.id].at - store.solved[a.id].at).slice(0, 12);
   mount(
     h("div", { class: "top" }, h("a", { class: "back", href: "#/" }, "‹ Home")),
     h("div", {}, h("div", { class: "label" }, "Clue type"), h("h1", {}, t.name)),
     h("p", {}, LESSONS[type]),
     h("div", { class: "card" }, h("h2", {}, "Words that signal it"), h("div", { class: "chips" }, t.indicators.map((w) => h("span", { class: "chip" }, w)))),
     example ? h("div", { class: "card" }, h("h2", {}, "Worked example"),
-      h("div", { class: "example" }, clueEl(example, { d: 1, i: 1, f: 1 }), h("p", { class: "explain" }, h("b", {}, example.answer), ". ", example.explain)), legend()) : null,
+      h("div", { class: "example" }, clueEl(example, { d: 1, i: 1, f: 1 }), h("p", { class: "explain" }, h("b", {}, example.answer), ". ", example.explain)), legend(), creditEl(example)) : null,
     next ? h("a", { class: "btn primary block", href: `#/clue/${next.id}/practice` }, "Practise this type") : h("p", { class: "result" }, "You've solved every clue of this type."),
-    h("h2", {}, "Clues of this type"),
-    h("div", { class: "list" }, rest.map((c) => {
+    h("p", { class: "small muted" }, `${done.length} of ${mine.length.toLocaleString()} solved.`),
+    recent.length ? h("h2", {}, "Recently solved") : null,
+    recent.length ? h("div", { class: "list" }, recent.map((c) => {
       const s = store.solved[c.id];
       return h("a", { class: "row", href: `#/clue/${c.id}/practice` },
-        h("div", { class: "grow" }, h("div", { class: "title q" }, parseClue(c.clue).text), h("div", { class: "sub" }, s ? c.answer : `${c.answer.length} letters · ${["", "gentle", "medium", "tricky"][c.level ?? 2]}`)),
-        h("span", { class: "end" + (s && !s.gaveUp ? " done" : "") }, s ? (s.gaveUp ? "shown" : s.hints ? `${s.hints} hint${s.hints === 1 ? "" : "s"}` : "✓ no hints") : "›"));
-    })),
+        h("div", { class: "grow" }, h("div", { class: "title q" }, c.clue), h("div", { class: "sub" }, c.answer)),
+        h("span", { class: "end" + (!s.gaveUp ? " done" : "") }, s.gaveUp ? "shown" : s.hints ? `${s.hints} hint${s.hints === 1 ? "" : "s"}` : "✓ no hints"));
+    })) : null,
   );
 }
 
@@ -213,9 +225,10 @@ function viewClue(id, ctx) {
     } else if (!w.show[kind]) {
       w.show[kind] = 1; w.hints++;
     }
-    if (kind === "d") say = { parts: c.type === "double" ? ["Both halves are ", h("b", {}, "definitions"), " of the same word."] : ["The ", h("b", {}, "definition"), " is underlined: the answer means that. The rest is wordplay."] };
-    if (kind === "i") say = { parts: [h("b", {}, t.name), ". ", t.short, "." + (parseClue(c.clue).spans.some((s) => s.kind === "i") ? " The indicator is in orange." : " There's no indicator word here.")] };
-    if (kind === "f") say = { parts: c.type === "double" ? ["No fodder in this one: just the two definitions."] : ["The ", h("b", {}, "fodder"), " is in green: ", ["anagram", "hidden", "letters"].includes(c.type) ? "the letters you need are right there." : "find a short word or abbreviation for each green piece."] };
+    if (kind === "d") say = { parts: ["The ", h("b", {}, "definition"), " is underlined: the answer means that. The rest is wordplay."] };
+    if (kind === "i") say = { parts: [h("b", {}, t.name), ". ", t.short, "." + ((c.i ?? []).length ? " The indicator is in orange." : " There's no indicator word here.")] };
+    if (kind === "i" && !(c.i ?? []).length) say = { parts: [h("b", {}, t.name), ". ", t.short, ". There's no indicator word in this one."] };
+    if (kind === "f") say = { parts: ["The ", h("b", {}, "pieces"), " are in green: ", ["anagram", "hidden", "letters"].includes(c.type) ? "the letters you need are right there." : "find a short word or abbreviation for each green piece."] };
     save(); draw();
   };
 
@@ -225,7 +238,7 @@ function viewClue(id, ctx) {
     const others = CLUES.filter((x) => x.type === c.type && !store.solved[x.id] && x.id !== c.id);
     mount(
       h("div", { class: "top" }, h("a", { class: "back", href: daily ? "#/" : `#/learn/${c.type}` }, daily ? "‹ Home" : `‹ ${t.name}`),
-        h("span", { class: "grow" }), h("span", { class: "label" }, daily ? niceDate(daily) : "Practice")),
+        h("span", { class: "grow" }), h("span", { class: "label" }, daily ? niceDate(daily) : (c.from ?? "Practice").replace(/ by .*$/, "").slice(0, 28))),
       h("div", { class: "play" },
         clueEl(c, w.show),
         h("div", { class: "boxes" + (s && !s.gaveUp ? " solved" : "") + (wrong ? " wrong" : ""), role: "group", "aria-label": `Answer, ${n} letters` },
@@ -233,7 +246,7 @@ function viewClue(id, ctx) {
             onclick: () => { if (!s) { cur = i; draw(); } } }, ch))),
         s ? [
           h("p", { class: "result" }, scoreText(s)),
-          h("div", { class: "card" }, h("h2", {}, t.name), h("p", { class: "explain" }, c.explain), legend()),
+          h("div", { class: "card" }, h("h2", {}, t.name), h("p", { class: "explain" }, c.explain), legend(), creditEl(c)),
           h("div", { class: "btns" },
             h("a", { class: "btn", href: `#/learn/${c.type}` }, `About ${t.name.toLowerCase()} clues`),
             others.length ? h("a", { class: "btn primary", href: `#/clue/${others[0].id}/practice` }, "Another like this") : h("a", { class: "btn primary", href: "#/" }, "Home")),
@@ -243,7 +256,7 @@ function viewClue(id, ctx) {
           h("div", { class: "hints" },
             h("button", { class: "hint d" + used("d"), onclick: () => hint("d") }, "Definition", h("small", {}, w.show.d ? "shown" : "which part?")),
             h("button", { class: "hint i" + used("i"), onclick: () => hint("i") }, "Clue type", h("small", {}, w.show.i ? "shown" : "and indicator")),
-            h("button", { class: "hint f" + used("f"), onclick: () => hint("f") }, "Fodder", h("small", {}, w.show.f ? "shown" : "the pieces")),
+            h("button", { class: "hint f" + used("f"), onclick: () => hint("f") }, "Pieces", h("small", {}, w.show.f ? "shown" : "what to use")),
             h("button", { class: "hint", onclick: () => hint("letter") }, "Letter", h("small", {}, "reveal one"))),
           h("div", { class: "spacer" }),
           keyboard(),

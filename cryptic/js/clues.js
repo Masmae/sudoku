@@ -1,54 +1,32 @@
-// Cryptic clues: how a clue is written down, and a checker for its wordplay.
+// Cryptic clues: how a clue is stored, and a checker for its wordplay.
 //
-// A clue's text marks its parts:
-//   [d|…] the definition   [i|…] the indicator (the word that tells you what to do)
-//   [f|…] the fodder (the letters or words the wordplay works on)
-// e.g. "[f|Night] [i|out] for [d|an object]"  →  "Night out for an object" (THING).
-//
+// The clues are real newspaper clues from George Ho's dataset (https://cryptics.georgeho.org),
+// chosen by tools/build-cryptic.mjs: only clues whose wordplay could be fully reconstructed.
+// A clue has its plain text plus where its parts are (character positions in the text):
+//   d  the definition [start, end]
+//   i  the indicators [[start, end], …]: the words that tell you what to do
+//   f  the pieces [[start, end, LETTERS], …]: the words the wordplay works on, and the letters they give
 // `recipe` says how the answer is built, as nested lists, so it can be checked by machine:
-//   "CAR"                       those letters (a synonym or abbreviation named in the clue)
+//   "CAR"                       those letters
 //   ["cat", a, b, …]            one after another
 //   ["ana", "NIGHT"]            an anagram of these letters
 //   ["hid", "sly recital"]      hidden inside these words
 //   ["rev", x]                  x backwards
 //   ["in", x, y]                x inside y
 //   ["odd", "antler"] / ["even", …]     alternate letters
-//   ["first", "see every…"] / ["last", …]   first / last letters of the words
-//   ["del", "PLANET", "T"]      the first word without those letters (a head, tail, heart or a word)
-//   ["hom", "PEAR"]             sounds like (can't be checked by machine)
-//   ["dd"]                      two definitions (can't be checked by machine)
 
 export const TYPES = {
   anagram: { name: "Anagram", short: "Rearrange the letters", indicators: ["mixed", "broken", "out", "wild", "arranged", "upset", "badly", "new"] },
   hidden: { name: "Hidden word", short: "The answer is hiding in the clue", indicators: ["in", "some of", "part of", "held by", "found in", "inside"] },
-  reversal: { name: "Reversal", short: "Read it backwards", indicators: ["back", "returned", "reversed", "going west", "retreating", "knocked over"] },
+  charade: { name: "Charade", short: "Pieces joined end to end", indicators: ["(usually none: the pieces just sit side by side)"] },
   container: { name: "Container", short: "One piece goes inside another", indicators: ["in", "inside", "holding", "around", "eats", "takes in"] },
-  charade: { name: "Charade", short: "Pieces joined end to end", indicators: ["and", "with", "gets", "by", "(often none)"] },
-  letters: { name: "Letter picking", short: "First, last or alternate letters", indicators: ["starts to", "heads of", "ends of", "oddly", "regularly", "finally"] },
-  deletion: { name: "Deletion", short: "Take letters away", indicators: ["headless", "endless", "without", "loses", "missing", "cut"] },
-  double: { name: "Double definition", short: "Two meanings, one word", indicators: ["(none: two definitions side by side)"] },
-  homophone: { name: "Homophone", short: "Sounds like another word", indicators: ["we hear", "reportedly", "they say", "on the radio", "aloud"] },
+  reversal: { name: "Reversal", short: "Read it backwards", indicators: ["back", "returned", "reversed", "going west", "retreating", "up (in down clues)"] },
+  letters: { name: "Alternate letters", short: "Take every other letter", indicators: ["oddly", "evenly", "regularly", "alternately", "odd bits of"] },
 };
 
 export const letters = (s) => String(s).toUpperCase().replace(/[^A-Z]/g, "");
 const sorted = (s) => [...s].sort().join("");
 const reverse = (s) => [...s].reverse().join("");
-
-/** "[f|Night] [i|out] for [d|an object]" → { text, spans: [{ kind, start, end }] } */
-export function parseClue(marked) {
-  let text = "";
-  const spans = [];
-  const re = /\[([dif])\|([^\]]+)\]/g;
-  let last = 0, m;
-  while ((m = re.exec(marked))) {
-    text += marked.slice(last, m.index);
-    spans.push({ kind: m[1], start: text.length, end: text.length + m[2].length });
-    text += m[2];
-    last = re.lastIndex;
-  }
-  text += marked.slice(last);
-  return { text, spans };
-}
 
 /** Does `recipe` produce `target`? Unverifiable parts (sounds-like, double definitions) count as true. */
 export function matches(recipe, target) {
@@ -80,42 +58,37 @@ export function matches(recipe, target) {
     default: return false;
   }
 }
-const checkable = (recipe) => (typeof recipe === "string" ? true : !["hom", "dd"].includes(recipe[0]) && recipe.slice(1).every((a) => typeof a !== "object" || checkable(a)));
-
-/**
- * Everything wrong with a clue, as a list of messages (empty = fine). Used by the tests and to
- * filter machine-written clues before they reach the app.
- */
-export function problems(c) {
+/** Everything wrong with a stored clue, as a list of messages (empty = fine). Used by the tests. */
+export function check(c) {
   const out = [];
   const bad = (m) => out.push(m);
-  if (!c || typeof c !== "object") return ["not a clue"];
-  if (typeof c.clue !== "string" || c.clue.length < 8 || c.clue.length > 160) bad("clue text missing or too long");
-  if (typeof c.answer !== "string" || !/^[A-Z]{3,12}$/.test(c.answer)) bad("answer must be 3–12 capital letters");
-  if (!TYPES[c.type]) bad(`unknown type ${c.type}`);
-  if (typeof c.explain !== "string" || c.explain.length < 10 || c.explain.length > 400) bad("explanation missing or too long");
-  if (out.length) return out;
-  if (/[<>]/.test(c.clue + c.explain)) bad("no markup allowed");
-  const { text, spans } = parseClue(c.clue);
-  const kinds = spans.map((s) => s.kind);
-  const defs = spans.filter((s) => s.kind === "d");
-  if (c.type === "double" ? defs.length !== 2 : defs.length !== 1) bad("needs one definition (two for a double definition)");
-  if (defs.length && c.type !== "double" && defs[0].start !== 0 && defs[0].end !== text.replace(/[\s.?!]+$/, "").length) bad("the definition must be at the start or the end");
-  if (!["double", "charade"].includes(c.type) && !kinds.includes("i")) bad("needs an indicator");
-  if (c.type !== "double" && !kinds.includes("f")) bad("needs fodder");
-  if (letters(text).includes(c.answer) && c.type !== "hidden") bad("the answer appears in the clue");
-  if (!matches(c.recipe ?? ["?"], c.answer)) bad("the recipe doesn't make the answer");
-  // Where the letters are spelled out in the clue itself, they must really be there.
-  const fodder = spans.filter((s) => s.kind === "f").map((s) => text.slice(s.start, s.end)).join(" ");
-  const literal = (r) => (typeof r === "string" ? [] : ["ana", "hid", "odd", "even", "first", "last"].includes(r[0]) ? [r[1]] : r.slice(1).flatMap((a) => (typeof a === "object" ? literal(a) : [])));
-  for (const l of literal(c.recipe ?? [])) if (!letters(fodder).includes(letters(l))) bad(`"${l}" isn't in the clue's fodder`);
-  const want = { anagram: "ana", hidden: "hid", reversal: "rev", container: "in", double: "dd", homophone: "hom", deletion: "del", charade: "cat" }[c.type];
-  const uses = (r, op) => typeof r === "object" && (r[0] === op || r.slice(1).some((a) => uses(a, op)));
-  if (want && !uses(c.recipe, want)) bad(`a ${c.type} clue needs "${want}" in its recipe`);
-  if (c.type === "letters" && !["odd", "even", "first", "last"].some((op) => uses(c.recipe, op))) bad("a letter-picking clue needs odd/even/first/last");
+  if (!c || typeof c.clue !== "string" || !/^[A-Z]{4,10}$/.test(c.answer ?? "") || !TYPES[c.type]) return ["not a clue"];
+  const inside = (sp) => Array.isArray(sp) && sp[0] >= 0 && sp[1] > sp[0] && sp[1] <= c.clue.length;
+  if (!inside(c.d)) bad("definition out of range");
+  else if (c.d[0] !== 0 && c.d[1] !== c.clue.replace(/[\s.?!…]+$/, "").length) bad("the definition must be at the start or the end");
+  const spans = [c.d, ...(c.i ?? []), ...(c.f ?? [])];
+  if (!spans.every(inside)) bad("a part is out of range");
+  for (let x = 0; x < spans.length; x++) for (let y = x + 1; y < spans.length; y++) if (spans[x][0] < spans[y][1] && spans[y][0] < spans[x][1]) bad("parts overlap");
+  if (!(c.f ?? []).length) bad("no pieces");
+  if (c.type !== "charade" && !(c.i ?? []).length) bad("no indicator");
+  if (!matches(c.recipe, c.answer)) bad("the recipe doesn't make the answer");
+  // The pieces named in the clue must be the letters the recipe uses.
+  const used = (r) => (typeof r === "string" ? [letters(r)] : r.slice(1).flatMap(used));
+  if ([...used(c.recipe)].sort().join("|") !== (c.f ?? []).map((f) => (["hid", "odd", "even"].includes(c.recipe[0]) ? letters(c.clue.slice(f[0], f[1])) : f[2])).sort().join("|")) bad("pieces and recipe disagree");
+  if (["anagram", "hidden", "letters"].includes(c.type) && c.f?.[0] && letters(c.clue.slice(c.f[0][0], c.f[0][1])) !== c.f[0][2]) bad("fodder isn't in the clue");
+  if (typeof c.explain !== "string" || c.explain.length < 10 || /[<>]/.test(c.explain + c.clue)) bad("explanation missing");
+  if (c.url && !/^https:\/\//.test(c.url)) bad("link must be https");
   return out;
 }
-export const isCheckable = (c) => checkable(c.recipe);
+
+/** A shuffle that always gives the same order for the same seed. */
+export function seededShuffle(list, seed) {
+  let a = seed >>> 0;
+  const rand = () => { a = (a + 0x6d2b79f5) >>> 0; let t = Math.imul(a ^ (a >>> 15), a | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const out = [...list];
+  for (let i = out.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [out[i], out[j]] = [out[j], out[i]]; }
+  return out;
+}
 
 /** A date ("2026-11-20") → which clue of `n` is that day's. The order looks random but never changes. */
 export function dailyIndex(date, n) {
