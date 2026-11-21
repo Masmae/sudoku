@@ -1,7 +1,7 @@
 // Offline support. Network-first for the app's own files (so updates arrive as soon
 // as you're online), falling back to the cached copy when offline. Never touches
 // other origins.
-const CACHE = "sudoku-trainer-v5";
+const CACHE = "sudoku-trainer-v6";
 const FILES = [
   "./", "index.html", "manifest.webmanifest", "icon.svg",
   "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png",
@@ -9,13 +9,14 @@ const FILES = [
   "data/bundled.json", "data/technique-bank.json",
   "js/app/main.js", "js/app/dom.js", "js/app/storage.js", "js/app/library.js", "js/app/worker.js",
   "js/app/game.js", "js/app/boardview.js", "js/app/content.js", "js/app/variantlayer.js", "js/app/extras.js",
+  "cryptic/", "cryptic/index.html", "cryptic/css/style.css", "cryptic/js/app.js", "cryptic/js/clues.js", "cryptic/data/clues.json", "cryptic/icon.svg",
   "js/core/index.js", "js/core/geo.js", "js/core/board.js", "js/core/brute.js", "js/core/state.js",
   "js/core/technique.js", "js/core/techniques.js", "js/core/solver.js", "js/core/generator.js",
   "js/core/hint.js", "js/core/drill.js", "js/core/transform.js", "js/core/variants.js", "js/core/vsolver.js",
 ];
 
 // Cached if present; the app works without them.
-const OPTIONAL = ["data/variant-bank.json"];
+const OPTIONAL = ["data/variant-bank.json", "cryptic/data/generated.json"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE)

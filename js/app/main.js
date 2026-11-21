@@ -222,10 +222,11 @@ function route() {
 }
 
 // ---------------- Games (the front door) ----------------
-// Sudoku is one of the games; the others open their own apps. Links you add yourself (for
-// private apps) are kept only on this device, so their addresses never appear in this public app.
+// Sudoku is one of the games. Cryptic lives in this repo too (the cryptic/ folder); the others
+// open their own apps. Links you add yourself (for private apps) are kept only on this device, so
+// their addresses never appear in this public app.
 const BUILT_IN = [
-  { name: "Paper of the Day", sub: "One paper a day, plus lessons", url: "https://masmae.github.io/paperoftheday/", mark: "P" },
+  { name: "Cryptic", sub: "One cryptic clue a day, with hints that teach", url: "cryptic/", mark: "?" },
   { name: "Silver", sub: "The card game, 2 vs 2", url: "https://masmae.github.io/silver/", mark: "S" },
 ];
 function cleanLink(name, url) {
@@ -271,6 +272,7 @@ function viewGames() {
       h("button", { class: "btn", onclick: () => { form.hidden = false; nameIn.focus(); } }, "+ Add a game link"),
       h("button", { class: "btn", onclick: (e) => { editing = !editing; e.target.textContent = editing ? "Done" : "Edit links"; draw(); } }, "Edit links")),
     form,
+    h("p", { class: "footnote" }, "Private games such as Shelem aren't listed here by default: add them with \"+ Add a game link\", and the link stays on this device."),
     h("p", { class: "footnote" }, "Sudoku opens as it always has. To skip this screen, choose \"Open on: Sudoku\" in Sudoku's settings."));
 }
 
