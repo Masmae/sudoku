@@ -42,7 +42,7 @@ const results = prior.puzzles ?? [];
 // Searches that used their whole budget and still came up short. Some mixes almost never
 // produce an Expert/Master puzzle; after GIVE_UP misses they're skipped (the phone can still try).
 const misses = prior.misses ?? {};
-const GIVE_UP = 2;
+const GIVE_UP = 4;   // was 2 before easier puzzles could be stretched into harder ones: the old give-ups get two more tries
 const have = (ids, level) => results.filter((p) => comboKey(p.variants ?? [p.variant]) === comboKey(ids) && p.difficulty === level).length;
 const found = [], newMisses = {};
 const save = () => (NEW_OUT
