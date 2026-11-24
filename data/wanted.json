@@ -2,9 +2,14 @@
  "version": 1,
  "played": {
   "xv|4": 1,
-  "antiKing+germanWhisper|4": 1
+  "antiKing+germanWhisper|4": 1,
+  "nonConsecutive+xv|4": 1
  },
  "missed": {},
- "ratings": {},
+ "ratings": {
+  "antiKing+germanWhisper": {
+   "ok": 1
+  }
+ },
  "updated": "2026-11-24"
 }
