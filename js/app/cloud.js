@@ -84,13 +84,13 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 
 // ---------------------------------------------------------------- orders
 /** Asks the cloud to make this mix and level now. Throws with a readable message if it can't. */
-export async function order(mix, level) {
+export async function order(mix, level, { quiet = false } = {}) {
   const token = getToken();
   if (!token) throw new Error("Connect to GitHub in Settings first.");
   const res = await fetch(`${API}/dispatches`, { method: "POST", headers: headers(token), body: JSON.stringify({ event_type: "order", client_payload: { mix, level } }) });
   if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? "GitHub refused the order: check the token in Settings." : `GitHub said ${res.status}.`);
   const orders = pending().filter((o) => !(o.mix === mix && o.level === level));
-  orders.push({ mix, level, at: Date.now() });
+  orders.push({ mix, level, at: Date.now(), quiet });      // quiet: made ahead of time, no notice when it lands
   store.save("orders", orders);
 }
 /** Orders still on their way: [{ mix, level, at }] */

@@ -191,11 +191,11 @@ function watchOrders() {
       const ids = o.mix.split("+");
       if (app.lib.stockCount(Library.variantKey(ids, o.level)) > 0) {
         cloud.settle(o);
-        toast(`Your ${difficultyTitle(o.level)} ${comboName(ids)} puzzle is ready. Find it under Variants.`, 6000);
+        if (!o.quiet) toast(`Your ${difficultyTitle(o.level)} ${comboName(ids)} puzzle is ready. Find it under Variants.`, 6000);
         if (location.hash === "#/variants") route();
       } else if (Date.now() - o.at > 25 * 60000) {
         cloud.settle(o);
-        toast(`No ${difficultyTitle(o.level)} ${comboName(ids)} puzzle could be made this time. That mix may be too tight at that level.`, 6000);
+        if (!o.quiet) toast(`No ${difficultyTitle(o.level)} ${comboName(ids)} puzzle could be made this time. That mix may be too tight at that level.`, 6000);
       }
     }
   }, 30000);
@@ -248,30 +248,56 @@ function variantStreak() {
 }
 
 // The climb: a ladder of variant puzzles that starts at Hard (or Expert) and only goes up:
-// single variants, then pairs, then three-way mixes, each at rising levels.
+// single variants, then pairs, then three-way mixes, each at rising levels. After those opening
+// stages it never ends: every further stage is random pairs and three-way mixes at Expert and Master.
 const CLIMB_TIERS = [[1, 3], [2, 3], [1, 4], [2, 4], [3, 3], [1, 5], [2, 5], [3, 4], [3, 5]];   // [variants in the mix, level]
 const CLIMB_PER_TIER = 4;
+const CLIMB_AHEAD = 3;          // how many coming steps are chosen (and made ready) in advance
 function climbStage(step = app.stats.ladder.step) {
-  const tiers = CLIMB_TIERS.filter(([, level]) => level >= (app.stats.ladder.start ?? 3));
-  const t = Math.min(tiers.length - 1, Math.floor(step / CLIMB_PER_TIER));
-  const [size, level] = tiers[t];
-  const kept = app.stats.ladder.current;
-  if (kept?.step === step && Array.isArray(kept.ids)) return { step, ids: kept.ids, level, tier: t, tiers: tiers.length };
+  const ladder = app.stats.ladder;
+  const tiers = CLIMB_TIERS.filter(([, level]) => level >= (ladder.start ?? 3));
+  const t = Math.floor(step / CLIMB_PER_TIER);
+  const rand = seededRandom(step * 7919 + 13);
+  // Past the opening stages: mostly Master, sometimes Expert; pairs and three-way mixes.
+  const [size, level] = t < tiers.length ? tiers[t] : [rand() < 0.5 ? 2 : 3, rand() < 0.3 ? 4 : 5];
+  const info = { step, level, tier: t, opening: tiers.length };
+  const plan = (ladder.plan ??= {});
+  if (Array.isArray(plan[step])) return { ...info, ids: plan[step] };
   const pool = size === 1 ? VARIANTS.map((v) => [v.id]) : BANK_COMBOS.filter((c) => c.length === size);
-  const order = shuffle(pool.slice(), seededRandom(step * 7919 + 13));
-  // Prefer a mix that is ready at this level and that you haven't rated dull.
+  const order = shuffle(pool.slice(), rand);
+  // Prefer a mix that is ready at this level, that you haven't rated dull, and that isn't in the steps just before.
   const dull = (ids) => { const r = cloud.ratingOf(comboKey(ids)); return (r.dull ?? 0) > (r.fun ?? 0); };
-  const ids = order.find((c) => !dull(c) && app.lib.stockCount(Library.variantKey(c, level)) > 0) ?? order.find((c) => !dull(c)) ?? order[0];
-  app.stats.ladder.current = { step, ids };
+  const lately = new Set(Object.entries(plan).filter(([k]) => step - k <= 6).map(([, ids]) => comboKey(ids)));
+  const ok = (c) => !dull(c) && !lately.has(comboKey(c));
+  const ids = order.find((c) => ok(c) && app.lib.stockCount(Library.variantKey(c, level)) > 0) ?? order.find(ok) ?? order[0];
+  plan[step] = ids;
+  for (const k of Object.keys(plan)) if (k < ladder.step - 8) delete plan[k];
   store.save("stats", app.stats);
-  return { step, ids, level, tier: t, tiers: tiers.length };
+  return { ...info, ids };
+}
+/**
+ * Gets the next few steps of the climb ready while you play this one: any that isn't in stock is
+ * ordered from the cloud (if connected), or otherwise made quietly in the background on this device.
+ */
+async function prepareClimb() {
+  const from = app.stats.ladder.step;
+  for (let k = from; k <= from + CLIMB_AHEAD; k++) {
+    const st = climbStage(k), key = Library.variantKey(st.ids, st.level), mix = comboKey(st.ids);
+    if (app.lib.stockCount(key) > 0) continue;
+    if (k === from && app.game?.puzzle.ladder === from) continue;        // you're playing this one
+    if (cloud.connected()) {
+      if (cloud.pending().some((o) => o.mix === mix && o.level === st.level)) continue;
+      try { await cloud.order(mix, st.level, { quiet: true }); } catch { break; }
+    } else if (!(app.lib.owed[key] > 0)) app.lib.owe(key);
+  }
+  watchOrders();
 }
 async function playClimb(status) {
   const st = climbStage();
   if (app.game && app.game.puzzle.ladder === st.step && !app.game.isSolved) { location.hash = "#/game"; return; }
   const p = await obtainVariant(st.ids, st.level, (msg) => status.replaceChildren(h("span", { class: "spinner" }), " " + msg));
   status.replaceChildren();
-  if (p) startGame({ ...p, ladder: st.step });
+  if (p) { startGame({ ...p, ladder: st.step }); prepareClimb(); }
 }
 
 /** Small modal with buttons; resolves to the chosen button's value (or "cancel"). */
@@ -690,7 +716,7 @@ function viewGame() {
     if (pz.dailyV && !app.stats.dailyV[pz.dailyV]) app.stats.dailyV[pz.dailyV] = { ...record, late: pz.dailyV !== today() };
     if (pz.weeklyV && !app.stats.weeklyV[pz.weeklyV]) app.stats.weeklyV[pz.weeklyV] = record;
     const climbed = Number.isInteger(pz.ladder) && pz.ladder === app.stats.ladder.step;
-    if (climbed) { app.stats.ladder.step++; app.stats.ladder.current = null; }
+    if (climbed) { app.stats.ladder.step++; prepareClimb(); }
     store.save("stats", app.stats);
     store.remove("game");
     const newBest = !variant && g.hintsUsed === 0 && (oldBest === null || g.elapsed < oldBest);
@@ -839,17 +865,17 @@ function challengesEl() {
   const run = variantStreak();
   const startSeg = ladder.step === 0 ? h("div", { class: "toggle-row" }, h("span", {}, "The climb starts at"),
     h("div", { class: "segmented", role: "group", "aria-label": "The climb starts at" }, [[3, "Hard"], [4, "Expert"]].map(([v, l]) =>
-      h("button", { "aria-pressed": String((ladder.start ?? 3) === v), onclick: () => { ladder.start = v; ladder.current = null; store.save("stats", app.stats); route(); } }, l)))) : null;
+      h("button", { "aria-pressed": String((ladder.start ?? 3) === v), onclick: () => { ladder.start = v; ladder.plan = {}; store.save("stats", app.stats); route(); } }, l)))) : null;
   return h("div", { class: "section" }, h("h2", {}, "Challenges"), h("div", { class: "list" },
     row("Daily variant", dDone ? `Solved in ${timeString(dDone.time)} · ${describe(dp)}` : `${niceDate(now)} · ${describe(dp)}`,
       dDone ? "✓" : tagged("dailyV", now) ? "Continue" : run ? `${run}-day streak` : "", () => (dDone ? toast(`Done for today: ${timeString(dDone.time)}. A new one arrives at midnight.`, 3200) : startChallenge("dailyV", now)), !!dDone),
     row("Weekly challenge", wDone ? `Solved in ${timeString(wDone.time)} · ${describe(wp)}` : `Week ${week.slice(-2)} · ${describe(wp)}`,
       wDone ? "✓" : tagged("weeklyV", week) ? "Continue" : "", () => (wDone ? toast(`This week's challenge is done: ${timeString(wDone.time)}.`, 3200) : startChallenge("weeklyV", week)), !!wDone),
     row("The climb", `Step ${st.step + 1} · ${comboName(st.ids)} · ${difficultyTitle(st.level)}`,
-      tagged("ladder", st.step) ? "Continue" : `Stage ${st.tier + 1} of ${st.tiers}`, () => playClimb(status), false),
+      tagged("ladder", st.step) ? "Continue" : `Stage ${st.tier + 1}`, () => playClimb(status), false),
     startSeg),
     status,
-    h("p", { class: "footnote" }, "The climb only goes up: single variants, then pairs, then three-way mixes, at rising levels. Each puzzle you solve is one step."));
+    h("p", { class: "footnote" }, `The climb has no top: single variants, then pairs, then three-way mixes at rising levels, and after that an endless run of random mixes at Expert and Master. Four steps make a stage. Coming up: ${[1, 2].map((d) => climbStage(st.step + d)).map((x) => `${comboName(x.ids)} (${difficultyTitle(x.level)})`).join(", then ")}. The next steps are made ready while you play.`));
 }
 
 /** Pick 2-3 variants to combine. */
