@@ -247,10 +247,10 @@ function variantStreak() {
   return n;
 }
 
-// The climb: a ladder of variant puzzles that starts at Hard (or Expert) and only goes up:
-// single variants, then pairs, then three-way mixes, each at rising levels. After those opening
-// stages it never ends: every further stage is random pairs and three-way mixes at Expert and Master.
-const CLIMB_TIERS = [[1, 3], [2, 3], [1, 4], [2, 4], [3, 3], [1, 5], [2, 5], [3, 4], [3, 5]];   // [variants in the mix, level]
+// The climb: a ladder of mixed-variant puzzles (always two or three variants at once, three more
+// often) that starts at Hard (or Expert) and only goes up. After the opening stages it never
+// ends: every further stage is random mixes, mostly three-way, at Expert and Master.
+const CLIMB_TIERS = [[2, 3], [3, 3], [3, 3], [2, 4], [3, 4], [3, 4], [2, 5], [3, 5], [3, 5]];   // [variants in the mix, level]
 const CLIMB_PER_TIER = 4;
 const CLIMB_AHEAD = 3;          // how many coming steps are chosen (and made ready) in advance
 function climbStage(step = app.stats.ladder.step) {
@@ -259,11 +259,12 @@ function climbStage(step = app.stats.ladder.step) {
   const t = Math.floor(step / CLIMB_PER_TIER);
   const rand = seededRandom(step * 7919 + 13);
   // Past the opening stages: mostly Master, sometimes Expert; pairs and three-way mixes.
-  const [size, level] = t < tiers.length ? tiers[t] : [rand() < 0.5 ? 2 : 3, rand() < 0.3 ? 4 : 5];
+  const [size, level] = t < tiers.length ? tiers[t] : [rand() < 0.3 ? 2 : 3, rand() < 0.3 ? 4 : 5];
   const info = { step, level, tier: t, opening: tiers.length };
+  if (ladder.v !== 2) { ladder.v = 2; ladder.plan = {}; }      // the climb became mixes-only: choose the coming steps again
   const plan = (ladder.plan ??= {});
   if (Array.isArray(plan[step])) return { ...info, ids: plan[step] };
-  const pool = size === 1 ? VARIANTS.map((v) => [v.id]) : BANK_COMBOS.filter((c) => c.length === size);
+  const pool = BANK_COMBOS.filter((c) => c.length === size);
   const order = shuffle(pool.slice(), rand);
   // Prefer a mix that is ready at this level, that you haven't rated dull, and that isn't in the steps just before.
   const dull = (ids) => { const r = cloud.ratingOf(comboKey(ids)); return (r.dull ?? 0) > (r.fun ?? 0); };
@@ -875,7 +876,7 @@ function challengesEl() {
       tagged("ladder", st.step) ? "Continue" : `Stage ${st.tier + 1}`, () => playClimb(status), false),
     startSeg),
     status,
-    h("p", { class: "footnote" }, `The climb has no top: single variants, then pairs, then three-way mixes at rising levels, and after that an endless run of random mixes at Expert and Master. Four steps make a stage. Coming up: ${[1, 2].map((d) => climbStage(st.step + d)).map((x) => `${comboName(x.ids)} (${difficultyTitle(x.level)})`).join(", then ")}. The next steps are made ready while you play.`));
+    h("p", { class: "footnote" }, `The climb has no top, and every step is a mix of two or three variants (three more often), rising from Hard to Master and then on through an endless run of random mixes. Four steps make a stage. Coming up: ${[1, 2].map((d) => climbStage(st.step + d)).map((x) => `${comboName(x.ids)} (${difficultyTitle(x.level)})`).join(", then ")}. The next steps are made ready while you play.`));
 }
 
 /** Pick 2-3 variants to combine. */
