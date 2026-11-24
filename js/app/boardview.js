@@ -189,12 +189,13 @@ export class BoardView {
 
   drawLinks(hl) {
     this.links.replaceChildren();
+    this.links.classList.toggle("many", hl.links.length > 8);   // long chains: thinner, fainter lines
     if (!hl.links.length) return;
     // Marker size is in board units (900 per side).
     const defs = svg("defs", {}, svg("marker", { id: "arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 16, markerHeight: 16,
       orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" }, svg("path", { d: "M0,0 L10,5 L0,10 z", class: "arrowhead" })));
     this.links.append(defs);
-    const r = 21;
+    const r = 19;
     for (const l of hl.links) {
       const [ax0, ay0] = candPoint(l.from.cell, l.from.digit), [bx0, by0] = candPoint(l.to.cell, l.to.digit);
       const ux = bx0 - ax0, uy = by0 - ay0, ul = Math.max(1, Math.hypot(ux, uy));

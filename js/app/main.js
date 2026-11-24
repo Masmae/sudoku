@@ -426,8 +426,10 @@ function viewGame() {
     pauseBtn.replaceChildren(icon(g.paused ? "play" : "pause"));
     pauseBtn.setAttribute("aria-label", g.paused ? "Resume" : "Pause");
     board.setVariant(g.puzzle.kind === "variant" ? g.puzzle.features : null);
-    board.render({ values: g.values, given: (c) => g.isGiven(c), notes, wrong, selected: g.selected, highlightDigit: g.highlightDigit,
-      digitMode: g.lockMode && !!g.lockedDigit, extra: g.variantFocus(), hl, shake: g.shake, pulse: g.pulse, pulseFrom: g.pulseFrom, wave: g.wave, pop: g.pop,
+    // While a hint's pattern is on show, your own highlighting (same digit, locked digit) steps aside.
+    const showing = g.hint && g.hintLevel >= 2;
+    board.render({ values: g.values, given: (c) => g.isGiven(c), notes, wrong, selected: showing ? null : g.selected, highlightDigit: showing ? null : g.highlightDigit,
+      digitMode: !showing && g.lockMode && !!g.lockedDigit, extra: showing ? null : g.variantFocus(), hl, shake: g.shake, pulse: g.pulse, pulseFrom: g.pulseFrom, wave: g.wave, pop: g.pop,
       multi: g.multi.size > 1 ? g.multi : null, colors: g.colors, candColors: g.candColors, corner: notes === g.notes ? g.corner : null,
       noteConflicts: app.settings.noteWarnings && notes === g.notes ? g.noteConflicts() : null });
     g.shake = null; g.pulse = null; g.pop = null; g.wave = false;
@@ -528,7 +530,7 @@ function viewGame() {
     } else if (hint.kind === "solved") { title = "Solved"; msg = "Nothing left to do!"; }
     else { title = "No step found"; msg = "None of the techniques in this app finds a step from here. This puzzle needs something more exotic (forcing chains, ALS…). Select a cell and use ••• → Reveal cell instead."; }
     const legend = hint.kind === "step" && g.hintLevel >= 2 ? h("div", { class: "legend" },
-      h("span", {}, h("i", { style: { background: "var(--key)" } }), "pattern"),
+      hint.step.keyCandidates.length ? h("span", {}, h("i", { style: { background: "var(--key)" } }), "pattern") : h("span", {}, h("i", { style: { background: "var(--hint-unit-strong)", borderRadius: "2px" } }), "the rule's cells"),
       hint.step.secondaryCandidates.length ? h("span", {}, h("i", { style: { background: "var(--secondary)" } }), "second color") : null,
       g.hintLevel >= 3 && hint.step.eliminations.length ? h("span", {}, h("i", { style: { boxShadow: "inset 0 0 0 1.5px var(--elim)" } }), "removed") : null,
       hint.step.links.length ? h("span", {}, h("i", { style: { background: "var(--link)", borderRadius: "2px", height: "3px", width: "14px" } }), "solid = strong, dashed = weak") : null) : null;

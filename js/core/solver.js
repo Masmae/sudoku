@@ -78,8 +78,12 @@ export function resultText(st) {
   if (st.eliminations.length) {
     const byDigit = new Map();
     for (const e of st.eliminations) { if (!byDigit.has(e.digit)) byDigit.set(e.digit, []); byDigit.get(e.digit).push(e.cell); }
-    parts.push("Remove " + [...byDigit.entries()].sort((a, b) => a[0] - b[0])
-      .map(([d, cs]) => `${d} from ${cellNames(cs.sort((a, b) => a - b))}`).join("; "));
+    const byCell = new Map();
+    for (const e of st.eliminations) { if (!byCell.has(e.cell)) byCell.set(e.cell, []); byCell.get(e.cell).push(e.digit); }
+    // Whichever reads shorter: "5 from r1c2, r1c3" or "1, 2, 4 from r3c8".
+    parts.push("Remove " + (byCell.size < byDigit.size
+      ? [...byCell.entries()].sort((a, b) => a[0] - b[0]).map(([c, ds]) => `${ds.sort((a, b) => a - b).join(", ")} from ${cellName(c)}`).join("; ")
+      : [...byDigit.entries()].sort((a, b) => a[0] - b[0]).map(([d, cs]) => `${d} from ${cellNames(cs.sort((a, b) => a - b))}`).join("; ")));
   }
   return parts.join(". ") + ".";
 }

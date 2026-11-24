@@ -104,8 +104,8 @@ function pairStep(s, p) {
   if (!elims.length) return null;
   const st = makeStep("variantRule");
   st.eliminations = elims; st.cells = [p.a, p.b]; st.digits = [...new Set(elims.map((e) => e.digit))];
-  st.keyCandidates = [p.a, p.b].flatMap((c) => digitsOf(s.cands[c]).filter((d) => !elims.some((e) => e.cell === c && e.digit === d)).map((d) => cand(c, d)));
-  st.explanation = `${pairText(p)}. ${describeElims(elims)} — nothing in the other cell would work with ${elims.length === 1 ? "it" : "them"}.`;
+  // The two shaded cells show the rule; only the eliminations are marked (level 3).
+  st.explanation = `${pairText(p)}. ${describeElims(elims, s)}: nothing in the other cell would work with ${elims.length === 1 ? "it" : "them"}.`;
   return st;
 }
 
@@ -142,14 +142,23 @@ function groupStep(s, g, nodeCap = 60000) {
   const st = makeStep("variantRule");
   st.eliminations = elims; st.cells = cells.slice(); st.digits = [...new Set(elims.map((e) => e.digit))];
   // The shaded cells show the rule; only the eliminations are marked (level 3).
-  st.explanation = `${groupText(g)}. ${describeElims(elims)} — no way of filling it works with ${elims.length === 1 ? "that digit" : "those digits"}.`;
+  // A cage of one cell is simply its total.
+  st.explanation = g.type === "cage" && g.cells.length === 1
+    ? `${cellName(g.cells[0])} is a cage on its own, so it must be its total, ${g.sum}.`
+    : `${groupText(g)}. ${describeElims(elims, s)}: no way of filling it works with ${elims.length === 1 ? "that digit" : "those digits"}.`;
   return st;
 }
 
-function describeElims(elims) {
+/** "So r3c8 can't be 1, 2 or 4 (leaving 7), and r3c9 can't be 9" */
+function describeElims(elims, s) {
   const byCell = new Map();
   for (const e of elims) { if (!byCell.has(e.cell)) byCell.set(e.cell, []); byCell.get(e.cell).push(e.digit); }
-  return "So " + [...byCell].map(([c, ds]) => `${cellName(c)} can't be ${ds.sort((a, b) => a - b).join(" or ")}`).join(", ");
+  const list = (ds) => (ds.length === 1 ? String(ds[0]) : `${ds.slice(0, -1).join(", ")} or ${ds.at(-1)}`);
+  const parts = [...byCell].map(([c, ds]) => {
+    const left = s ? digitsOf(s.cands[c]).filter((d) => !ds.includes(d)) : [];
+    return `${cellName(c)} can't be ${list(ds.sort((a, b) => a - b))}${left.length === 1 ? ` (leaving ${left[0]})` : ""}`;
+  });
+  return "So " + (parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`);
 }
 
 function variantRuleStep(s) {
