@@ -5,11 +5,12 @@ import { Game, AUTOCOMPLETE_MAX_EMPTY } from "./game.js";
 import { BoardView, highlightsFor, emptyHighlights, miniBoard } from "./boardview.js";
 import { today, addDays, niceDate, parseDate, dateKey, streak, bestStreak, encodeShare, decodeShare, variantIcon, solveChart } from "./extras.js";
 import { CONTENT } from "./content.js";
+import * as cloud from "./cloud.js";
 import {
   TECHNIQUES, T, DIFFICULTIES, difficultyTitle, placesDigits, nudge, resultText, cellName, cellNames,
   candidateState, drillState, firstStep, judgeDrill, ck, has, parsePuzzle, hasNoConflicts, bruteSolve, SolveState, nextStep,
   puzzleString, logicalSolve, gradePuzzle, VARIANTS, VARIANT, VariantState, variantNextStep,
-  canCombine, comboKey, comboName, surpriseCombo,
+  canCombine, comboKey, comboName, surpriseCombo, BANK_COMBOS, seededRandom, shuffle,
 } from "../core/index.js";
 
 // ---------------- App state ----------------
@@ -25,6 +26,7 @@ const app = {
   game: Game.fromJSON(store.load("game", null)),
   busy: false,
 };
+app.stats.dailyV ??= {}; app.stats.weeklyV ??= {}; app.stats.ladder ??= { step: 0, start: 3 };
 app.stats.solved ??= {}; app.stats.best ??= {}; app.stats.history ??= []; app.stats.hintTech ??= {}; app.stats.daily ??= {};
 const root = document.getElementById("view");
 /** Append children to the view, flattening arrays and skipping null/false. */
@@ -140,11 +142,27 @@ const puzzleTitle = (p) => (p.kind === "variant" ? `${comboName(variantIds(p))} 
  * time, asks whether to play that or keep looking. Resolves to a puzzle or null.
  */
 async function obtainVariant(ids, level, onStatus) {
-  const name = comboName([].concat(ids));
+  const list = [].concat(ids);
+  const name = comboName(list), mix = comboKey(list), key = `${mix}|${level}`;
   // Instant: a ready puzzle from the pool or the shipped dataset (a replacement is
   // then generated in the background).
   const ready = app.lib.takeVariant(ids, level);
-  if (ready) return ready;
+  if (ready) { cloud.notePlayed(key, true); return ready; }
+  cloud.notePlayed(key, false);          // it wasn't ready: the nightly build will make this one first
+  // Not in stock. With the cloud connected, it can be built there instead of on this device.
+  if (cloud.connected()) {
+    const waiting = cloud.pending().some((o) => o.mix === mix && o.level === level);
+    const choice = await ask(`No ${difficultyTitle(level)} ${name} puzzle ready`,
+      waiting ? "One is already being made in the cloud; it should arrive in a few minutes. Or make one on this device now (up to 15 seconds, and it may come out easier)."
+        : "Order one from the cloud (it arrives in a few minutes, and you can play something else meanwhile), or make one on this device now (up to 15 seconds, and it may come out easier).",
+      [["cancel", "Cancel"], ["here", "Make it on this device"], ...(waiting ? [] : [["order", "Order from the cloud", true]])]);
+    if (choice === "order") {
+      try { await cloud.order(mix, level); watchOrders(); toast(`Ordered. You'll get a notice when your ${name} puzzle is ready.`, 4000); }
+      catch (e) { toast(e.message, 4000); }
+      return null;
+    }
+    if (choice !== "here") return null;
+  }
   for (let round = 1; ; round++) {
     onStatus(`Making a ${difficultyTitle(level).toLowerCase()} ${name} puzzle…${level >= 3 ? ` ${difficultyTitle(level)} ones can take up to 15 seconds.` : ""}${round > 1 ? ` (try ${round})` : ""}`);
     const p = await app.lib.nextVariant(ids, level);
@@ -157,6 +175,103 @@ async function obtainVariant(ids, level, onStatus) {
     if (choice === "play") return p;
     if (choice !== "wait") return null;
   }
+}
+
+/** While orders are on their way, look for them every half minute and say when one lands. */
+let orderTimer = 0;
+function watchOrders() {
+  clearInterval(orderTimer);
+  if (!cloud.pending().length) return;
+  orderTimer = setInterval(async () => {
+    const waiting = cloud.pending();
+    if (!waiting.length) return clearInterval(orderTimer);
+    if (document.visibilityState !== "visible") return;
+    await app.lib.refreshBank();
+    for (const o of waiting) {
+      const ids = o.mix.split("+");
+      if (app.lib.stockCount(Library.variantKey(ids, o.level)) > 0) {
+        cloud.settle(o);
+        toast(`Your ${difficultyTitle(o.level)} ${comboName(ids)} puzzle is ready. Find it under Variants.`, 6000);
+        if (location.hash === "#/variants") route();
+      } else if (Date.now() - o.at > 25 * 60000) {
+        cloud.settle(o);
+        toast(`No ${difficultyTitle(o.level)} ${comboName(ids)} puzzle could be made this time. That mix may be too tight at that level.`, 6000);
+      }
+    }
+  }, 30000);
+}
+
+// ---------------- Variant challenges: daily, weekly, and the climb ----------------
+const hashOf = (text) => { let h = 2166136261; for (const ch of text) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return h >>> 0; };
+const isoWeek = (d = new Date()) => {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const week = Math.ceil(((t - Date.UTC(t.getUTCFullYear(), 0, 1)) / 86400000 + 1) / 7);
+  return `${t.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+};
+/** One cloud-built puzzle chosen by a seed (a date or a week), the same on every device that has the same dataset. */
+function seededPick(seed, wanted) {
+  for (const ok of wanted) {
+    const list = app.lib.variantBank.filter(ok).sort((a, b) => (a.puzzle < b.puzzle ? -1 : 1));
+    if (list.length) return list[hashOf(seed) % list.length];
+  }
+  return null;
+}
+/** The challenge puzzle for `id` ("2026-11-23" or "2026-W48"): fixed the first time it is opened. */
+function challengePuzzle(kind, id) {
+  const kept = store.load(kind, null);
+  if (kept?.id === id && kept.puzzle?.features) return kept.puzzle;
+  const size = (p) => (p.variants ?? [p.variant]).length;
+  let p;
+  if (kind === "dailyV") {
+    const level = 3 + (Math.floor(Date.parse(id + "T00:00:00Z") / 86400000) % 3);     // Hard, Expert, Master in turn
+    p = seededPick(id, [(x) => x.difficulty === level && size(x) <= 2, (x) => x.difficulty >= 3 && size(x) <= 2, (x) => x.difficulty >= 3]);
+  } else {
+    p = seededPick(id, [(x) => x.difficulty === 5 && size(x) === 3, (x) => x.difficulty >= 4 && size(x) === 3, (x) => x.difficulty >= 4 && size(x) === 2, (x) => x.difficulty >= 3]);
+  }
+  if (p) store.save(kind, { id, puzzle: p });
+  return p;
+}
+function startChallenge(kind, id) {
+  const tag = kind === "dailyV" ? "dailyV" : "weeklyV";
+  if (app.game && app.game.puzzle[tag] === id && !app.game.isSolved) { location.hash = "#/game"; return; }
+  const p = challengePuzzle(kind, id);
+  if (!p) return toast("The cloud-built puzzles haven't loaded. Check the connection and try again.", 3500);
+  startGame({ ...p, [tag]: id });
+}
+function variantStreak() {
+  const ok = (k) => app.stats.dailyV[k] && !app.stats.dailyV[k].late;
+  let k = ok(today()) ? today() : addDays(today(), -1), n = 0;
+  while (ok(k)) { n++; k = addDays(k, -1); }
+  return n;
+}
+
+// The climb: a ladder of variant puzzles that starts at Hard (or Expert) and only goes up:
+// single variants, then pairs, then three-way mixes, each at rising levels.
+const CLIMB_TIERS = [[1, 3], [2, 3], [1, 4], [2, 4], [3, 3], [1, 5], [2, 5], [3, 4], [3, 5]];   // [variants in the mix, level]
+const CLIMB_PER_TIER = 4;
+function climbStage(step = app.stats.ladder.step) {
+  const tiers = CLIMB_TIERS.filter(([, level]) => level >= (app.stats.ladder.start ?? 3));
+  const t = Math.min(tiers.length - 1, Math.floor(step / CLIMB_PER_TIER));
+  const [size, level] = tiers[t];
+  const kept = app.stats.ladder.current;
+  if (kept?.step === step && Array.isArray(kept.ids)) return { step, ids: kept.ids, level, tier: t, tiers: tiers.length };
+  const pool = size === 1 ? VARIANTS.map((v) => [v.id]) : BANK_COMBOS.filter((c) => c.length === size);
+  const order = shuffle(pool.slice(), seededRandom(step * 7919 + 13));
+  // Prefer a mix that is ready at this level and that you haven't rated dull.
+  const dull = (ids) => { const r = cloud.ratingOf(comboKey(ids)); return (r.dull ?? 0) > (r.fun ?? 0); };
+  const ids = order.find((c) => !dull(c) && app.lib.stockCount(Library.variantKey(c, level)) > 0) ?? order.find((c) => !dull(c)) ?? order[0];
+  app.stats.ladder.current = { step, ids };
+  store.save("stats", app.stats);
+  return { step, ids, level, tier: t, tiers: tiers.length };
+}
+async function playClimb(status) {
+  const st = climbStage();
+  if (app.game && app.game.puzzle.ladder === st.step && !app.game.isSolved) { location.hash = "#/game"; return; }
+  const p = await obtainVariant(st.ids, st.level, (msg) => status.replaceChildren(h("span", { class: "spinner" }), " " + msg));
+  status.replaceChildren();
+  if (p) startGame({ ...p, ladder: st.step });
 }
 
 /** Small modal with buttons; resolves to the chosen button's value (or "cancel"). */
@@ -571,32 +686,59 @@ function viewGame() {
     app.stats.history.push({ at: Date.now(), d: k, v: variant ? 1 : 0, name: puzzleTitle(g.puzzle), time: g.elapsed, mistakes: g.mistakes, hints: g.hintsUsed });
     if (app.stats.history.length > 300) app.stats.history.splice(0, app.stats.history.length - 300);
     if (g.daily && !app.stats.daily[g.daily]) app.stats.daily[g.daily] = { time: g.elapsed, mistakes: g.mistakes, hints: g.hintsUsed, late: g.daily !== today() };
+    const pz = g.puzzle, record = { time: g.elapsed, mistakes: g.mistakes, hints: g.hintsUsed };
+    if (pz.dailyV && !app.stats.dailyV[pz.dailyV]) app.stats.dailyV[pz.dailyV] = { ...record, late: pz.dailyV !== today() };
+    if (pz.weeklyV && !app.stats.weeklyV[pz.weeklyV]) app.stats.weeklyV[pz.weeklyV] = record;
+    const climbed = Number.isInteger(pz.ladder) && pz.ladder === app.stats.ladder.step;
+    if (climbed) { app.stats.ladder.step++; app.stats.ladder.current = null; }
     store.save("stats", app.stats);
     store.remove("game");
     const newBest = !variant && g.hintsUsed === 0 && (oldBest === null || g.elapsed < oldBest);
-    const hardest = g.puzzle.hardest && T[g.puzzle.hardest] ? T[g.puzzle.hardest].name : g.puzzle.techniques?.length ? T[g.puzzle.techniques[g.puzzle.techniques.length - 1]]?.name : null;
+    // "Variant rule" is listed last but isn't the hardest idea in a variant puzzle: name the hardest technique proper.
+    const real = (g.puzzle.techniques ?? []).filter((t) => t !== "variantRule" && T[t]);
+    const hardest = real.length ? T[real[real.length - 1]].name : g.puzzle.hardest && T[g.puzzle.hardest] ? T[g.puzzle.hardest].name : null;
     const tile = (value, label, cls = "") => h("div", { class: "tile " + cls }, h("b", {}, value), h("span", {}, label));
     const beat = g.puzzle.beat;
+    // Ratings steer what gets built and what "Surprise me" and the climb pick.
+    const mix = variant ? comboKey(variantIds(g.puzzle)) : null;
+    const rateRow = (label, options) => {
+      const said = h("span", { class: "small muted" });
+      const rowEl = h("div", { class: "rate-row" }, h("span", { class: "small" }, label), options.map(([what, text, after]) => h("button", { class: "btn small", onclick: () => {
+        cloud.rate(mix, what);
+        if (what === "easy" && k < 5) cloud.nudge(`${mix}|${k + 1}`);
+        if (what === "hard" && k > 1) cloud.nudge(`${mix}|${k - 1}`);
+        rowEl.replaceChildren(h("span", { class: "small" }, label), said); said.textContent = after;
+      } }, text)));
+      return rowEl;
+    };
     const show = () => {
       const dlg = openDialog(h("dialog", {}, h("div", { class: "solved" },
         h("div", { class: "big" }, "✓"), h("h2", {}, "Solved!"),
-        h("p", { class: "muted" }, g.daily ? `Daily puzzle · ${niceDate(g.daily)} · ${puzzleTitle(g.puzzle)}` : puzzleTitle(g.puzzle)),
+        h("p", { class: "muted" }, g.daily ? `Daily puzzle · ${niceDate(g.daily)} · ${puzzleTitle(g.puzzle)}`
+          : pz.dailyV ? `Daily variant · ${niceDate(pz.dailyV)} · ${puzzleTitle(g.puzzle)}` : pz.weeklyV ? `Weekly challenge · ${puzzleTitle(g.puzzle)}`
+          : climbed ? `The climb, step ${pz.ladder + 1} · ${puzzleTitle(g.puzzle)}` : puzzleTitle(g.puzzle)),
         h("div", { class: "tiles" },
           tile(timeString(g.elapsed), newBest ? "time · new best" : "time", newBest ? "good" : ""),
           tile(String(g.mistakes), g.mistakes === 1 ? "mistake" : "mistakes"),
           tile(String(g.hintsUsed), g.hintsUsed === 1 ? "hint" : "hints"),
           !variant && app.stats.best[k] ? tile(timeString(app.stats.best[k]), `best ${difficultyTitle(k)}, no hints`) : null,
-          g.daily ? tile(String(streak(app.stats.daily)), "day streak") : null),
+          g.daily ? tile(String(streak(app.stats.daily)), "day streak") : null,
+          pz.dailyV ? tile(String(variantStreak()), "day streak") : null,
+          climbed ? tile(String(app.stats.ladder.step), "steps climbed") : null),
+        variant ? h("div", { class: "card rate" },
+          rateRow("This mix was", [["fun", "👍 Fun", "Noted: more like it."], ["dull", "👎 Dull", "Noted: fewer of these."]]),
+          rateRow("The level felt", [["easy", "Too easy", k < 5 ? "Noted: more at the next level up." : "Noted."], ["ok", "Right", "Noted."], ["hard", "Too hard", "Noted."]])) : null,
         beat ? h("p", { class: g.elapsed < beat ? "feedback ok" : "feedback" }, g.elapsed < beat ? `You beat the shared time of ${timeString(beat)}.` : `The shared time to beat was ${timeString(beat)}.`) : null,
         h("div", { class: "card" }, h("div", { class: "small muted" }, hardest ? `Hardest technique: ${hardest}` : "Techniques this puzzle needed"),
           h("div", { class: "small" }, g.puzzle.techniques.map((t) => T[t].name).join(" · "))),
         h("div", { class: "btn-stack" },
           h("button", { class: "btn primary block", onclick: async () => {
             dlg.close();
+            if (climbed || pz.dailyV || pz.weeklyV) { location.hash = "#/variants"; return; }
             if (!variant) return newClassic(k);
             const p = await making(`Making a ${puzzleTitle(g.puzzle)} puzzle…`, () => obtainVariant(variantIds(g.puzzle), k, () => {}));
             if (p) startGame(p);
-          } }, g.daily ? `New ${difficultyTitle(k)} puzzle` : `New ${puzzleTitle(g.puzzle)} puzzle`),
+          } }, climbed ? "Next step of the climb" : pz.dailyV || pz.weeklyV ? "Back to the challenges" : g.daily ? `New ${difficultyTitle(k)} puzzle` : `New ${puzzleTitle(g.puzzle)} puzzle`),
           h("div", { class: "btn-row even" },
             h("button", { class: "btn", onclick: () => { dlg.close(); location.hash = "#/review"; } }, "Review my solve"),
             h("button", { class: "btn", onclick: () => { dlg.close(); location.hash = "#/path/start"; } }, "Solution path")),
@@ -671,7 +813,8 @@ function viewVariants() {
   const solved = app.stats.variants ?? {};
   mount(h("a", { class: "back", href: "#/play" }, icon("back"), "Play"),
     h("div", { class: "page-title" }, h("h1", {}, "Variants")),
-    h("p", { class: "muted lead" }, "Classic Sudoku plus extra rules. Every puzzle is generated on this device, has exactly one solution, and can be solved with hints."),
+    h("p", { class: "muted lead" }, "Classic Sudoku plus extra rules. Every puzzle has exactly one solution and can be solved with hints."),
+    challengesEl(),
     mixCard(),
     VARIANT_GROUPS.map(([title, ids]) => h("div", { class: "section" }, h("h2", {}, title), h("div", { class: "list" },
       ids.map((id) => VARIANT[id]).map((v) => h("button", { class: "row", onclick: () => chooseVariant(v) },
@@ -679,6 +822,34 @@ function viewVariants() {
         h("div", { class: "grow" }, h("div", { class: "title" }, v.name), h("div", { class: "sub" }, v.rules.replace(/^Normal Sudoku rules\. /, ""))),
         solved[v.id] ? h("span", { class: "badge" }, `${solved[v.id]} solved`) : null,
         h("span", { class: "chev" }, icon("chevron"))))))));
+}
+
+/** Daily variant, weekly challenge and the climb. */
+function challengesEl() {
+  const now = today(), week = isoWeek();
+  const tagged = (tag, id) => app.game && !app.game.isSolved && app.game.puzzle[tag] === id;
+  const row = (title, sub, end, onclick, done) => h("button", { class: "row", onclick },
+    h("div", { class: "grow" }, h("div", { class: "title" }, title), h("div", { class: "sub" }, sub)),
+    end ? h("span", { class: "badge" + (done ? " done" : "") }, end) : null, h("span", { class: "chev" }, icon("chevron")));
+  const describe = (p) => (p ? `${comboName(variantIds(p))} · ${difficultyTitle(p.difficulty)}` : "Needs the cloud-built puzzles (connect once to load them)");
+  const dp = challengePuzzle("dailyV", now), dDone = app.stats.dailyV[now];
+  const wp = challengePuzzle("weeklyV", week), wDone = app.stats.weeklyV[week];
+  const st = climbStage(), ladder = app.stats.ladder;
+  const status = h("p", { class: "small muted", role: "status" });
+  const run = variantStreak();
+  const startSeg = ladder.step === 0 ? h("div", { class: "toggle-row" }, h("span", {}, "The climb starts at"),
+    h("div", { class: "segmented", role: "group", "aria-label": "The climb starts at" }, [[3, "Hard"], [4, "Expert"]].map(([v, l]) =>
+      h("button", { "aria-pressed": String((ladder.start ?? 3) === v), onclick: () => { ladder.start = v; ladder.current = null; store.save("stats", app.stats); route(); } }, l)))) : null;
+  return h("div", { class: "section" }, h("h2", {}, "Challenges"), h("div", { class: "list" },
+    row("Daily variant", dDone ? `Solved in ${timeString(dDone.time)} · ${describe(dp)}` : `${niceDate(now)} · ${describe(dp)}`,
+      dDone ? "✓" : tagged("dailyV", now) ? "Continue" : run ? `${run}-day streak` : "", () => (dDone ? toast(`Done for today: ${timeString(dDone.time)}. A new one arrives at midnight.`, 3200) : startChallenge("dailyV", now)), !!dDone),
+    row("Weekly challenge", wDone ? `Solved in ${timeString(wDone.time)} · ${describe(wp)}` : `Week ${week.slice(-2)} · ${describe(wp)}`,
+      wDone ? "✓" : tagged("weeklyV", week) ? "Continue" : "", () => (wDone ? toast(`This week's challenge is done: ${timeString(wDone.time)}.`, 3200) : startChallenge("weeklyV", week)), !!wDone),
+    row("The climb", `Step ${st.step + 1} · ${comboName(st.ids)} · ${difficultyTitle(st.level)}`,
+      tagged("ladder", st.step) ? "Continue" : `Stage ${st.tier + 1} of ${st.tiers}`, () => playClimb(status), false),
+    startSeg),
+    status,
+    h("p", { class: "footnote" }, "The climb only goes up: single variants, then pairs, then three-way mixes, at rising levels. Each puzzle you solve is one step."));
 }
 
 /** Pick 2-3 variants to combine. */
@@ -703,11 +874,12 @@ function mixCard() {
     if (rulesLink) rulesLink.hidden = chosen.length < 2;
     // ⏳ = no ready-made puzzle for this mix and level on this device: it would be generated now.
     const stocked = (lvl) => app.lib.stockCount(Library.variantKey(chosen, lvl)) > 0;
+    const ordered = (lvl) => cloud.pending().some((o) => o.mix === comboKey(chosen) && o.level === lvl);
     levelRow.replaceChildren(...VARIANT_LEVEL_LIST.map(([lvl, title]) =>
       h("button", { class: "btn" + (lvl === app.settings.lastVariantLevel ? " primary" : ""), onclick: () => start(chosen.slice(), lvl, title) },
-        title, chosen.length >= 2 && !stocked(lvl) ? " ⏳" : "")));
+        title, chosen.length >= 2 && !stocked(lvl) ? (ordered(lvl) ? " ☁️" : " ⏳") : "")));
     if (chosen.length >= 2 && VARIANT_LEVEL_LIST.some(([lvl]) => !stocked(lvl)))
-      summary.append(h("br"), "⏳ = not ready-made yet; that level is generated when you start it.");
+      summary.append(h("br"), cloud.connected() ? "⏳ = not ready-made yet: tap it to order one from the cloud or make it here. ☁️ = on its way." : "⏳ = not ready-made yet; that level is generated when you start it.");
   };
   async function start(ids, lvl, title) {
     if (ids.length < 2) return;
@@ -723,7 +895,9 @@ function mixCard() {
       h("button", { class: "btn small", onclick: () => {
         // Avoid the current selection and the last 40 surprises.
         const recent = store.load("surpriseRecent", []);
-        const avoid = new Set([...recent, ...(chosen.length ? [comboKey(chosen)] : [])]);
+        // …and mixes you rated dull more often than fun.
+        const dull = Object.entries(cloud.getWanted().ratings).filter(([, r]) => (r.dull ?? 0) > (r.fun ?? 0)).map(([m]) => m);
+        const avoid = new Set([...recent, ...dull, ...(chosen.length ? [comboKey(chosen)] : [])]);
         // Only mixes with ready-made Hard and Expert puzzles (the levels that get played), so starting one is instant.
         const ready = (ids) => [3, 4].every((lvl) => app.lib.stockCount(Library.variantKey(ids, lvl)) > 0);
         const c = surpriseCombo(Math.random, avoid, ready);
@@ -1060,6 +1234,7 @@ function viewSettings() {
     h("div", { class: "section" }, h("h2", {}, "Progress"),
       h("div", { class: "tiles four" }, tile(classic, "classic solved"), tile(variants, "variants solved"), tile(`${mastered}/${TECHNIQUES.length}`, "techniques mastered"), tile(streak(app.stats.daily), "day streak")),
       h("a", { class: "btn block", href: "#/stats" }, "See all stats")),
+    cloudSection(),
     h("div", { class: "section" }, h("h2", {}, "Puzzles"), h("div", { class: "list" },
       h("div", { class: "toggle-row" }, h("span", {}, "Built-in puzzles"), h("span", { class: "muted" }, String(app.lib.bundled.length))),
       h("div", { class: "toggle-row" }, h("span", {}, "Ready-to-play variant puzzles"), h("span", { class: "muted", id: "ready-count" }, String(app.lib.readyCount()))),
@@ -1075,6 +1250,34 @@ function viewSettings() {
       h("p", {}, "Technique articles: ", h("a", { href: "https://www.sudokuwiki.org/Strategy_Families", target: "_blank", rel: "noopener noreferrer" }, "SudokuWiki"),
         " · ", h("a", { href: "https://hodoku.sourceforge.net/en/tech_intro.php", target: "_blank", rel: "noopener noreferrer" }, "HoDoKu")))),
   );
+}
+
+/** Settings: connect this device to GitHub, where the puzzles are built. */
+function cloudSection() {
+  const on = cloud.connected(), st = cloud.getStatus();
+  const input = h("input", { type: "password", class: "field", placeholder: "github_pat_…", autocomplete: "off", spellcheck: "false", "aria-label": "GitHub token" });
+  const msg = h("p", { class: "small muted", role: "status" });
+  const save = h("button", { class: "btn primary", onclick: async () => {
+    save.disabled = true; msg.textContent = "Checking…";
+    const ok = await cloud.setToken(input.value);
+    save.disabled = false;
+    if (ok) route(); else msg.textContent = `That didn't work: ${cloud.getStatus().message}. Check the token's repository and permission.`;
+  } }, "Connect");
+  return h("div", { class: "section" }, h("h2", {}, "Cloud puzzles"),
+    on ? h("div", { class: "card cloud-card" },
+      h("p", {}, "Connected to GitHub.", st.ok ? "" : ` The last save failed: ${st.message}.`),
+      h("p", { class: "small muted" }, "The nightly build now makes the mixes and levels you play first, and you can order a mix that isn't ready (⏳) from the cloud."),
+      h("div", { class: "btn-row" }, h("button", { class: "btn", onclick: async () => { await cloud.setToken(""); route(); } }, "Disconnect this device")))
+      : h("div", { class: "card cloud-card" },
+        h("p", { class: "small muted" }, "Optional. Connect a GitHub token so the nightly build makes the mixes you actually play first, and so you can order a mix that isn't ready and have it built in the cloud in a few minutes."),
+        h("ol", { class: "steps small" },
+          h("li", {}, "Open ", h("a", { href: "https://github.com/settings/personal-access-tokens/new", target: "_blank", rel: "noopener noreferrer" }, "GitHub → new fine-grained token"), "."),
+          h("li", {}, "Name it ", h("b", {}, "sudoku app"), " and set an expiration (up to a year)."),
+          h("li", {}, "Repository access: ", h("b", {}, "Only select repositories"), " → ", h("b", {}, "sudoku"), "."),
+          h("li", {}, "Permissions → Repository → ", h("b", {}, "Contents: Read and write"), ". Nothing else."),
+          h("li", {}, "Generate, copy, and paste it here.")),
+        input, h("div", { class: "btn-row" }, h("span", { class: "spacer" }), save), msg,
+        h("p", { class: "small muted" }, "The token is kept only in this browser. It can change only this one repository, and you can revoke it on GitHub at any time.")));
 }
 
 // ---------------- Daily puzzle ----------------
@@ -1221,6 +1424,7 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
 // installed app's start address is "#/play", so that counts as "just opened" too.
 if (["", "#/play", "#/games"].includes(location.hash)) history.replaceState(null, "", app.settings.startOn === "sudoku" ? "#/play" : "#/games");
 window.addEventListener("hashchange", route);
+watchOrders();
 app.lib.load().then(route).catch((e) => {
   root.replaceChildren(h("div", { class: "card" }, h("h2", {}, "Couldn't start"), h("p", {}, e.message),
     h("p", { class: "muted" }, "Open this page through the local server (./web/serve.sh), not by double-clicking the file.")));

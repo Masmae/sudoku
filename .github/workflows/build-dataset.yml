@@ -1,14 +1,17 @@
-# Builds the ready-made puzzle dataset (data/variant-bank.json) on GitHub's machines,
-# so no generation has to happen on a laptop or phone. Each run re-verifies what's
-# there, fills gaps for up to ~5.5 hours, commits the result and redeploys Pages.
-# The dataset covers every single variant, all 151 pairs and 48 three-way mixes; once it's
-# full, a daily run only re-verifies and tops up (a few minutes).
+# Builds the ready-made puzzle dataset (data/variant-bank.json) on GitHub's machines, so no
+# generation has to happen on a laptop or phone.
+#
+# The work is split into 12 slices that run at the same time on separate machines; a last job
+# merges what they found, re-verifies every puzzle, commits and redeploys Pages.
+# What is built first follows data/wanted.json (the mixes and levels you actually play; written
+# by the app when it is connected to GitHub). For Expert and Master, easier puzzles of the same
+# mix are stretched first, which is much quicker than starting from an empty grid.
 name: Build puzzle dataset
 
 on:
   workflow_dispatch:            # "Run workflow" button on the Actions tab
   schedule:
-    - cron: "0 7 * * *"         # daily 07:00 UTC: fills gaps until full, then just tops up
+    - cron: "0 7 * * *"         # daily 07:00 UTC
   push:
     branches: [main]
     paths: ["js/core/**", "tools/**", ".github/workflows/build-dataset.yml"]
@@ -19,51 +22,61 @@ permissions:
 
 concurrency:
   group: build-dataset
-  cancel-in-progress: true      # a newer run (new engine/tools) replaces a running one; progress is saved every 30 min
+  cancel-in-progress: true      # a newer run (new engine/tools) replaces a running one
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 170
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Re-verify existing puzzles
-        run: node tools/verify-variant-bank.mjs
-      - name: Build missing puzzles (time-limited, saved to the repo every 30 minutes)
+      - name: Build this slice's missing puzzles
+        run: node tools/build-variant-bank.mjs --workers 4 --total-minutes 150 --minutes-per-key 3 --shard ${{ matrix.slice }}/12 --new-out slice-${{ matrix.slice }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: slice-${{ matrix.slice }}
+          path: slice-${{ matrix.slice }}.json
+          if-no-files-found: ignore
+          retention-days: 2
+
+  merge:
+    needs: build
+    if: ${{ !cancelled() }}     # merge whatever slices finished, even if some failed
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          path: slices
+          pattern: slice-*
+          merge-multiple: true
+      - name: Merge, verify and commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Publish progress every 30 minutes, so a cancelled or replaced run loses at most that.
-          save() {
+          ls slices 2>/dev/null || { echo "no slices to merge"; mkdir -p slices; }
+          # If the repo moved on meanwhile (an order, a new app version), redo the merge on the newest copy.
+          for i in 1 2 3 4 5; do
+            git fetch -q origin main && git reset -q --hard origin/main
+            node tools/merge-variant-bank.mjs slices/*.json
+            node tools/verify-variant-bank.mjs
             git add data/variant-bank.json
-            git diff --cached --quiet && return 0
-            git commit -q -m "Update puzzle dataset (in progress)"
-            for i in 1 2 3; do git pull --rebase -q origin main && git push -q && return 0; sleep 5; done
-            echo "couldn't push progress; will try again later"
-          }
-          node tools/build-variant-bank.mjs --workers 4 --total-minutes 320 --minutes-per-key 3 &
-          pid=$!
-          while kill -0 $pid 2>/dev/null; do
-            for i in $(seq 180); do kill -0 $pid 2>/dev/null || break; sleep 10; done
-            kill -0 $pid 2>/dev/null && save
-          done
-          wait $pid
-      - name: Verify again
-        run: node tools/verify-variant-bank.mjs
-      - name: Commit dataset
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/variant-bank.json
-          if git diff --cached --quiet; then echo "no changes"; exit 0; fi
-          git commit -m "Update puzzle dataset"
-          # The app may have been redeployed while this ran: replay on top, then push.
-          for i in 1 2 3; do
-            git pull --rebase -q origin main && git push && exit 0
-            sleep 5
+            if git diff --cached --quiet; then echo "no changes"; exit 0; fi
+            git commit -q -m "Update puzzle dataset"
+            git push -q && exit 0
+            sleep $((i * 5))
           done
           exit 1
       - name: Redeploy GitHub Pages

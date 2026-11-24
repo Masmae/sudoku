@@ -296,6 +296,38 @@ export function generateVariant(variant, level = 2, rand = Math.random, budgetMs
   return best;
 }
 
+/**
+ * Makes a harder puzzle out of an existing one of the same mix: takes away givens (and then
+ * spare clues) while the solution stays unique and the hint engine can still solve it, until it
+ * grades at exactly `level`. Much quicker than starting from an empty grid, because the grid and
+ * its clues are already known to work. Returns a new puzzle, or null if this one won't stretch.
+ */
+export function deriveVariant(p, level, rand = Math.random, budgetMs = 8000) {
+  const deadline = Date.now() + budgetMs;
+  const vals = parsePuzzle(p.puzzle), full = parsePuzzle(p.solution);
+  if (!vals || !full || p.difficulty >= level) return null;
+  let features = p.features;
+  const cm = compile(features);
+  let grade = gradeVariant(cm, vals);
+  if (!grade || grade.level >= level) return null;
+  const givens = shuffle(vals.map((v, c) => (v ? c : -1)).filter((c) => c >= 0), rand);
+  for (const c of givens) {
+    if (grade.level === level || Date.now() > deadline) break;
+    const keep = vals[c];
+    vals[c] = 0;
+    const g = variantSolve(cm, vals, 2, null, 60000).count === 1 ? gradeVariant(cm, vals) : null;
+    if (g && g.level <= level) grade = g; else vals[c] = keep;
+  }
+  if (grade.level < level && Date.now() < deadline) ({ features, grade } = thinFeatures(features, vals, level, grade, rand, deadline));
+  if (grade.level !== level) return null;
+  const ids = p.variants ?? [p.variant];
+  return {
+    kind: "variant", variant: ids.length === 1 ? ids[0] : ids.join("+"), variants: ids, features,
+    puzzle: puzzleString(vals), solution: p.solution,
+    difficulty: grade.level, techniques: grade.techniques, hardest: grade.techniques[grade.techniques.length - 1] ?? "hiddenSingle",
+  };
+}
+
 // Clue lists that may be partially given ("not all dots are given" etc.). Greater-than
 // signs and consecutive bars are complete by definition, so they are never thinned.
 const THINNABLE = ["thermos", "arrows", "whispers", "renbans", "palindromes", "dots", "xv", "quads", "parity", "cages"];

@@ -1,0 +1,53 @@
+# "Order from the cloud" in the app: makes puzzles for one mix and level right now and adds
+# them to the dataset. The app sends a repository_dispatch (with your GitHub token, from
+# Sudoku's Settings); nothing else can start this.
+name: Order a puzzle
+
+on:
+  repository_dispatch:
+    types: [order]
+
+permissions:
+  contents: write
+  pages: write
+
+concurrency:
+  group: order-puzzle           # one order at a time; none is dropped
+  cancel-in-progress: false
+
+jobs:
+  make:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MIX: ${{ github.event.client_payload.mix }}
+      LEVEL: ${{ github.event.client_payload.level }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Make the puzzles
+        run: |
+          # Only variant names joined by "+", and a level from 1 to 5 (the builder checks the names).
+          echo "$MIX" | grep -Eq '^[A-Za-z]{2,20}(\+[A-Za-z]{2,20}){0,2}$' || { echo "bad mix"; exit 1; }
+          echo "$LEVEL" | grep -Eq '^[1-5]$' || { echo "bad level"; exit 1; }
+          node tools/build-variant-bank.mjs --only "$MIX" --level "$LEVEL" --want 2 --workers 4 --total-minutes 10 --minutes-per-key 9 --new-out "$RUNNER_TEMP/order.json"
+      - name: Add them to the dataset
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for i in 1 2 3 4 5; do
+            git fetch -q origin main && git reset -q --hard origin/main
+            node tools/merge-variant-bank.mjs "$RUNNER_TEMP/order.json"
+            git add data/variant-bank.json
+            if git diff --cached --quiet; then echo "::notice::Nothing new was found for $MIX at level $LEVEL."; exit 0; fi
+            git commit -q -m "Ordered: $MIX level $LEVEL"
+            git push -q && exit 0
+            sleep $((i * 4))
+          done
+          exit 1
+      - name: Redeploy GitHub Pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST "repos/${{ github.repository }}/pages/builds" || echo "Pages will redeploy on its own"

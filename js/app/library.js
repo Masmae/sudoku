@@ -121,6 +121,14 @@ export class Library {
     this.onPoolChange();
   }
 
+  /** Reloads the cloud-built puzzles (new ones arrive there every night, and when you order one). */
+  async refreshBank() {
+    try {
+      const vb = await (await fetch(`data/variant-bank.json?t=${Date.now()}`, { cache: "no-store" })).json();
+      if (Array.isArray(vb.puzzles)) { this.variantBank = vb.puzzles; this.onPoolChange(); }
+    } catch { /* offline: keep what we have */ }
+  }
+
   /** How many puzzles are ready to start instantly. */
   readyCount() {
     const pooled = Object.values(this.pool).reduce((n, list) => n + list.length, 0);
