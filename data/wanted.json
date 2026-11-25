@@ -3,7 +3,8 @@
  "played": {
   "xv|4": 1,
   "antiKing+germanWhisper|4": 1,
-  "nonConsecutive+xv|4": 1
+  "nonConsecutive+xv|4": 1,
+  "antiKnight+diagonal|4": 1
  },
  "missed": {},
  "ratings": {
@@ -15,5 +16,5 @@
    "ok": 1
   }
  },
- "updated": "2026-11-24"
+ "updated": "2026-11-25"
 }
