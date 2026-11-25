@@ -7,7 +7,8 @@
   "antiKnight+diagonal|4": 1,
   "antiKnight+diagonal|3": 1,
   "antiKnight+palindrome+sandwich|4": 1,
-  "diagonal+nonConsecutive+palindrome|4": 1
+  "diagonal+nonConsecutive+palindrome|4": 1,
+  "evenOdd+killer+quadruple|4": 1
  },
  "missed": {},
  "ratings": {
