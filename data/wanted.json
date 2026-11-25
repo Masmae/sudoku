@@ -4,7 +4,9 @@
   "xv|4": 1,
   "antiKing+germanWhisper|4": 1,
   "nonConsecutive+xv|4": 1,
-  "antiKnight+diagonal|4": 1
+  "antiKnight+diagonal|4": 1,
+  "antiKnight+diagonal|3": 1,
+  "antiKnight+palindrome+sandwich|4": 1
  },
  "missed": {},
  "ratings": {
@@ -14,6 +16,10 @@
   "nonConsecutive+xv": {
    "fun": 1,
    "ok": 1
+  },
+  "antiKnight+diagonal": {
+   "fun": 1,
+   "hard": 1
   }
  },
  "updated": "2026-11-25"
