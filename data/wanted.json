@@ -22,6 +22,10 @@
   "antiKnight+diagonal": {
    "fun": 1,
    "hard": 1
+  },
+  "evenOdd+killer+quadruple": {
+   "fun": 1,
+   "ok": 1
   }
  },
  "updated": "2026-11-25"
