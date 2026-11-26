@@ -10,7 +10,8 @@
   "diagonal+nonConsecutive+palindrome|4": 1,
   "evenOdd+killer+quadruple|4": 1,
   "arrow+diagonal+nonConsecutive|4": 1,
-  "evenOdd+kropki+sandwich|4": 1
+  "evenOdd+kropki+sandwich|4": 1,
+  "antiKing+palindrome+xv|4": 1
  },
  "missed": {},
  "ratings": {
