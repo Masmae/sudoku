@@ -11,7 +11,8 @@
   "evenOdd+killer+quadruple|4": 1,
   "arrow+diagonal+nonConsecutive|4": 1,
   "evenOdd+kropki+sandwich|4": 1,
-  "antiKing+palindrome+xv|4": 1
+  "antiKing+palindrome+xv|4": 1,
+  "antiKing+palindrome+xv|3": 1
  },
  "missed": {},
  "ratings": {
@@ -33,6 +34,10 @@
   "evenOdd+kropki+sandwich": {
    "fun": 1,
    "ok": 1
+  },
+  "antiKing+palindrome+xv": {
+   "fun": 1,
+   "hard": 1
   }
  },
  "updated": "2026-11-26"
