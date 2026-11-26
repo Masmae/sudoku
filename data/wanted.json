@@ -28,7 +28,11 @@
   "evenOdd+killer+quadruple": {
    "fun": 1,
    "ok": 1
+  },
+  "evenOdd+kropki+sandwich": {
+   "fun": 1,
+   "ok": 1
   }
  },
- "updated": "2026-11-25"
+ "updated": "2026-11-26"
 }
