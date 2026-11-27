@@ -6,14 +6,15 @@
   "nonConsecutive+xv|4": 1,
   "antiKnight+diagonal|4": 1,
   "antiKnight+diagonal|3": 1,
-  "antiKnight+palindrome+sandwich|4": 1,
+  "antiKnight+palindrome+sandwich|4": 2,
   "diagonal+nonConsecutive+palindrome|4": 1,
   "evenOdd+killer+quadruple|4": 1,
   "arrow+diagonal+nonConsecutive|4": 1,
   "evenOdd+kropki+sandwich|4": 1,
   "antiKing+palindrome+xv|4": 1,
   "antiKing+palindrome+xv|3": 1,
-  "renban+sandwich+windoku|4": 1
+  "renban+sandwich+windoku|4": 1,
+  "evenOdd+windoku|5": 1
  },
  "missed": {},
  "ratings": {
@@ -41,6 +42,10 @@
    "hard": 1
   },
   "renban+sandwich+windoku": {
+   "fun": 1,
+   "ok": 1
+  },
+  "antiKnight+palindrome+sandwich": {
    "fun": 1,
    "ok": 1
   }
