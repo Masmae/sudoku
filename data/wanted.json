@@ -14,7 +14,8 @@
   "antiKing+palindrome+xv|4": 1,
   "antiKing+palindrome+xv|3": 1,
   "renban+sandwich+windoku|4": 1,
-  "evenOdd+windoku|5": 1
+  "evenOdd+windoku|5": 1,
+  "evenOdd+renban|5": 1
  },
  "missed": {},
  "ratings": {
