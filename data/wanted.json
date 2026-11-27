@@ -15,7 +15,9 @@
   "antiKing+palindrome+xv|3": 1,
   "renban+sandwich+windoku|4": 1,
   "evenOdd+windoku|5": 1,
-  "evenOdd+renban|5": 1
+  "evenOdd+renban|5": 1,
+  "evenOdd+renban|4": 1,
+  "renban+xv|5": 1
  },
  "missed": {},
  "ratings": {
@@ -53,6 +55,10 @@
   "evenOdd+windoku": {
    "fun": 1,
    "ok": 1
+  },
+  "evenOdd+renban": {
+   "fun": 1,
+   "hard": 1
   }
  },
  "updated": "2026-11-27"
