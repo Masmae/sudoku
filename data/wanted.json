@@ -48,6 +48,10 @@
   "antiKnight+palindrome+sandwich": {
    "fun": 1,
    "ok": 1
+  },
+  "evenOdd+windoku": {
+   "fun": 1,
+   "ok": 1
   }
  },
  "updated": "2026-11-27"
