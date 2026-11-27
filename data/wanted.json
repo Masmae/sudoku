@@ -39,7 +39,11 @@
   "antiKing+palindrome+xv": {
    "fun": 1,
    "hard": 1
+  },
+  "renban+sandwich+windoku": {
+   "fun": 1,
+   "ok": 1
   }
  },
- "updated": "2026-11-26"
+ "updated": "2026-11-27"
 }
